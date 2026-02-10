@@ -3,6 +3,8 @@
 # Cryptographic API
 #
 
+CONTEXT_ANALYSIS := y
+
 obj-$(CONFIG_CRYPTO) += crypto.o
 crypto-y := api.o cipher.o
 
@@ -59,6 +61,8 @@ ecdsa_generic-y += ecdsa-x962.o
 ecdsa_generic-y += ecdsa-p1363.o
 ecdsa_generic-y += ecdsasignature.asn1.o
 obj-$(CONFIG_CRYPTO_ECDSA) += ecdsa_generic.o
+
+obj-$(CONFIG_CRYPTO_MLDSA) += mldsa.o
 
 crypto_acompress-y := acompress.o
 crypto_acompress-y += scompress.o
