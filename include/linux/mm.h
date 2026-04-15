@@ -1640,6 +1640,7 @@ static inline struct folio *virt_to_folio(const void *x)
 }
 
 void __folio_put(struct folio *folio);
+void __folio_put_prezeroed(struct folio *folio);
 
 void split_page(struct page *page, unsigned int order);
 void folio_copy(struct folio *dst, struct folio *src);
@@ -1815,6 +1816,17 @@ static inline void folio_put(struct folio *folio)
 {
 	if (folio_put_testzero(folio))
 		__folio_put(folio);
+}
+
+static inline void folio_put_prezeroed(struct folio *folio)
+{
+	if (folio_put_testzero(folio))
+		__folio_put_prezeroed(folio);
+}
+
+static inline void put_page_prezeroed(struct page *page)
+{
+	folio_put_prezeroed(page_folio(page));
 }
 
 /**
