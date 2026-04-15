@@ -1048,10 +1048,24 @@ static inline void __free_one_page(struct page *page,
 			change_pageblock_range(buddy, order, migratetype);
 		}
 
-		combined_pfn = buddy_pfn & pfn;
-		page = page + (combined_pfn - pfn);
-		pfn = combined_pfn;
-		order++;
+		{
+			bool both_prezeroed = PagePrezeroed(page) &&
+					     PagePrezeroed(buddy);
+
+			combined_pfn = buddy_pfn & pfn;
+			page = page + (combined_pfn - pfn);
+			pfn = combined_pfn;
+			order++;
+
+			/*
+			 * The merged page is only fully zero if both
+			 * buddies were prezeroed.
+			 */
+			if (both_prezeroed)
+				__SetPagePrezeroed(page);
+			else
+				__ClearPagePrezeroed(page);
+		}
 	}
 
 done_merging:
