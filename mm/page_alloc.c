@@ -1806,7 +1806,8 @@ static __always_inline void page_del_and_expand(struct zone *zone,
 	/*
 	 * If the page was reported and the host is known to zero reported
 	 * pages, mark it pre-zeroed so post_alloc_hook() can skip
-	 * redundant zeroing.
+	 * redundant zeroing.  Otherwise preserve any existing prezeroed
+	 * state (e.g. from free_frozen_pages_prezeroed).
 	 */
 	if (was_reported && page_reporting_host_zeroes_pages())
 		__SetPagePrezeroed(page);
