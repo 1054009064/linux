@@ -428,7 +428,7 @@ struct blk_mq_hw_ctx {
 	struct blk_mq_tags	*sched_tags;
 
 	/** @numa_node: NUMA node the storage adapter has been connected to. */
-	unsigned int		numa_node;
+	int			numa_node;
 	/** @queue_num: Index of this hardware queue. */
 	unsigned int		queue_num;
 
@@ -653,7 +653,7 @@ struct blk_mq_ops {
 	 * flush request.
 	 */
 	int (*init_request)(struct blk_mq_tag_set *set, struct request *,
-			    unsigned int, unsigned int);
+			    unsigned int, int);
 	/**
 	 * @exit_request: Ditto for exit/teardown.
 	 */
@@ -1104,6 +1104,7 @@ struct req_iterator {
 /*
  * blk_rq_pos()			: the current sector
  * blk_rq_bytes()		: bytes left in the entire request
+ * blk_rq_has_data()		: whether the request carries data
  * blk_rq_cur_bytes()		: bytes left in the current segment
  * blk_rq_sectors()		: sectors left in the entire request
  * blk_rq_cur_sectors()		: sectors left in the current segment
@@ -1117,6 +1118,14 @@ static inline sector_t blk_rq_pos(const struct request *rq)
 static inline unsigned int blk_rq_bytes(const struct request *rq)
 {
 	return rq->__data_len;
+}
+
+static inline bool blk_rq_has_data(const struct request *rq)
+{
+	return blk_rq_bytes(rq) &&
+	       req_op(rq) != REQ_OP_DISCARD &&
+	       req_op(rq) != REQ_OP_SECURE_ERASE &&
+	       req_op(rq) != REQ_OP_WRITE_ZEROES;
 }
 
 static inline int blk_rq_cur_bytes(const struct request *rq)
