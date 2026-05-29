@@ -189,7 +189,6 @@ static void filemap_unaccount_folio(struct address_space *mapping,
 			lruvec_stat_mod_folio(folio, NR_SHMEM_THPS, -nr);
 	} else if (folio_test_pmd_mappable(folio)) {
 		lruvec_stat_mod_folio(folio, NR_FILE_THPS, -nr);
-		filemap_nr_thps_dec(mapping);
 	}
 	if (test_bit(AS_KERNEL_FILE, &folio->mapping->flags))
 		mod_node_page_state(folio_pgdat(folio),
@@ -1808,9 +1807,8 @@ pgoff_t page_cache_next_miss(struct address_space *mapping,
 			     pgoff_t index, unsigned long max_scan)
 {
 	XA_STATE(xas, &mapping->i_pages, index);
-	unsigned long nr = max_scan;
 
-	while (nr--) {
+	while (max_scan--) {
 		void *entry = xas_next(&xas);
 		if (!entry || xa_is_value(entry))
 			return xas.xa_index;
@@ -1818,7 +1816,8 @@ pgoff_t page_cache_next_miss(struct address_space *mapping,
 			return 0;
 	}
 
-	return index + max_scan;
+	/* Return end of the range + 1 when no hole is found */
+	return xas.xa_index + 1;
 }
 EXPORT_SYMBOL(page_cache_next_miss);
 
@@ -1849,12 +1848,13 @@ pgoff_t page_cache_prev_miss(struct address_space *mapping,
 	while (max_scan--) {
 		void *entry = xas_prev(&xas);
 		if (!entry || xa_is_value(entry))
-			break;
+			return xas.xa_index;
 		if (xas.xa_index == ULONG_MAX)
-			break;
+			return ULONG_MAX;
 	}
 
-	return xas.xa_index;
+	/* Return start of the range - 1 when no hole is found */
+	return xas.xa_index - 1;
 }
 EXPORT_SYMBOL(page_cache_prev_miss);
 
@@ -3433,8 +3433,13 @@ static struct file *do_async_mmap_readahead(struct vm_fault *vmf,
 	 * Don't touch the mmap_miss counter to avoid decreasing it multiple
 	 * times for a single folio and break the balance with mmap_miss
 	 * increase in do_sync_mmap_readahead().
+	 *
+	 * VM_SEQ_READ mappings skip the mmap_miss increment in
+	 * do_sync_mmap_readahead(), so skip the decrement here as well to
+	 * keep the counter symmetric.
 	 */
-	if (likely(!folio_test_locked(folio))) {
+	if (likely(!folio_test_locked(folio)) &&
+	    !(vmf->vma->vm_flags & VM_SEQ_READ)) {
 		mmap_miss = READ_ONCE(ra->mmap_miss);
 		if (mmap_miss)
 			WRITE_ONCE(ra->mmap_miss, --mmap_miss);
@@ -3935,10 +3940,15 @@ vm_fault_t filemap_map_pages(struct vm_fault *vmf,
 		 * In such situation, read-ahead is only a waste of IO.
 		 * Don't decrease mmap_miss in this scenario to make sure
 		 * we can stop read-ahead.
+		 *
+		 * VM_SEQ_READ mappings skip the mmap_miss increment in
+		 * do_sync_mmap_readahead(), so skip the decrement here as
+		 * well to keep the counter symmetric.
 		 */
 		if ((map_ret & VM_FAULT_NOPAGE) &&
 		    !(vmf->flags & FAULT_FLAG_TRIED) &&
-		    !folio_test_workingset(folio)) {
+		    !folio_test_workingset(folio) &&
+		    !(vma->vm_flags & VM_SEQ_READ)) {
 			unsigned short mmap_miss;
 
 			mmap_miss = READ_ONCE(file->f_ra.mmap_miss);
