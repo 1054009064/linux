@@ -4190,7 +4190,7 @@ int vfs_create(struct mnt_idmap *idmap, struct dentry *dentry, umode_t mode,
 		return error;
 
 	if (!dir->i_op->create)
-		return -EACCES;	/* shouldn't it be ENOSYS? */
+		return -EOPNOTSUPP;
 
 	mode = vfs_prepare_mode(idmap, dir, mode, S_IALLUGO, S_IFREG);
 	error = security_inode_create(dir, dentry, mode);
@@ -4565,7 +4565,7 @@ retry:
 
 	file->f_mode |= FMODE_CREATED;
 	if (!dir_inode->i_op->create) {
-		error = -EACCES;
+		error = -EOPNOTSUPP;
 		goto out_dput;
 	}
 
@@ -5252,7 +5252,7 @@ int vfs_mknod(struct mnt_idmap *idmap, struct inode *dir,
 		return -EPERM;
 
 	if (!dir->i_op->mknod)
-		return -EPERM;
+		return -EOPNOTSUPP;
 
 	mode = vfs_prepare_mode(idmap, dir, mode, mode, mode);
 	error = devcgroup_inode_mknod(mode, dev);
@@ -5391,7 +5391,7 @@ struct dentry *vfs_mkdir(struct mnt_idmap *idmap, struct inode *dir,
 	if (error)
 		goto err;
 
-	error = -EPERM;
+	error = -EOPNOTSUPP;
 	if (!dir->i_op->mkdir)
 		goto err;
 
@@ -5495,7 +5495,7 @@ int vfs_rmdir(struct mnt_idmap *idmap, struct inode *dir,
 		return error;
 
 	if (!dir->i_op->rmdir)
-		return -EPERM;
+		return -EOPNOTSUPP;
 
 	dget(dentry);
 	inode_lock(dentry->d_inode);
@@ -5631,7 +5631,7 @@ int vfs_unlink(struct mnt_idmap *idmap, struct inode *dir,
 		return error;
 
 	if (!dir->i_op->unlink)
-		return -EPERM;
+		return -EOPNOTSUPP;
 
 	inode_lock(target);
 	if (IS_SWAPFILE(target))
@@ -5782,7 +5782,7 @@ int vfs_symlink(struct mnt_idmap *idmap, struct inode *dir,
 		return error;
 
 	if (!dir->i_op->symlink)
-		return -EPERM;
+		return -EOPNOTSUPP;
 
 	error = security_inode_symlink(dir, dentry, oldname);
 	if (error)
@@ -5904,7 +5904,7 @@ int vfs_link(struct dentry *old_dentry, struct mnt_idmap *idmap,
 	if (HAS_UNMAPPED_ID(idmap, inode))
 		return -EPERM;
 	if (!dir->i_op->link)
-		return -EPERM;
+		return -EOPNOTSUPP;
 	if (S_ISDIR(inode->i_mode))
 		return -EPERM;
 
@@ -6113,7 +6113,7 @@ int vfs_rename(struct renamedata *rd)
 		return error;
 
 	if (!old_dir->i_op->rename)
-		return -EPERM;
+		return -EOPNOTSUPP;
 
 	/*
 	 * If we are going to change the parent - check write permissions,
