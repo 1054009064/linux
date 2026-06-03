@@ -54,6 +54,7 @@
 #include "display/intel_bw.h"
 #include "display/intel_cdclk.h"
 #include "display/intel_crtc.h"
+#include "display/intel_display_core.h"
 #include "display/intel_display_device.h"
 #include "display/intel_display_driver.h"
 #include "display/intel_display_power.h"
@@ -1053,9 +1054,12 @@ void i915_driver_shutdown(struct drm_i915_private *i915)
 		drm_atomic_helper_shutdown(&i915->drm);
 	}
 
+	flush_workqueue(display->wq.cleanup);
+
 	intel_dp_mst_suspend(display);
 
-	intel_irq_suspend(i915);
+	intel_encoder_block_all_hpds(display);
+
 	intel_hpd_cancel_work(display);
 
 	if (intel_display_device_present(display))
@@ -1063,6 +1067,8 @@ void i915_driver_shutdown(struct drm_i915_private *i915)
 
 	intel_encoder_suspend_all(display);
 	intel_encoder_shutdown_all(display);
+
+	intel_irq_suspend(i915);
 
 	intel_dmc_suspend(display);
 
@@ -1135,13 +1141,16 @@ static int i915_drm_suspend(struct drm_device *dev)
 
 	intel_display_driver_suspend(display);
 
-	intel_irq_suspend(dev_priv);
+	intel_encoder_block_all_hpds(display);
+
 	intel_hpd_cancel_work(display);
 
 	if (intel_display_device_present(display))
 		intel_display_driver_suspend_access(display);
 
 	intel_encoder_suspend_all(display);
+
+	intel_irq_suspend(dev_priv);
 
 	/* Must be called before GGTT is suspended. */
 	intel_dpt_suspend(display);
@@ -1313,6 +1322,8 @@ static int i915_drm_resume(struct drm_device *dev)
 		intel_display_driver_resume_access(display);
 
 	intel_hpd_init(display);
+
+	intel_encoder_unblock_all_hpds(display);
 
 	intel_display_driver_resume(display);
 
