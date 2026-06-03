@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
+// SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 
 use kernel::{
     io::Io,
@@ -65,6 +66,20 @@ impl FbHal for Ga100 {
 
     fn vidmem_size(&self, bar: &Bar0) -> u64 {
         super::tu102::vidmem_size_gp102(bar)
+    }
+
+    fn pmu_reserved_size(&self) -> u32 {
+        super::tu102::pmu_reserved_size_tu102()
+    }
+
+    fn non_wpr_heap_size(&self) -> u32 {
+        super::tu102::non_wpr_heap_size_tu102()
+    }
+
+    // GA100 is a special case where its FRTS region exists, but is empty.  We
+    // return a size of 0 because we still need to record where the region starts.
+    fn frts_size(&self) -> u64 {
+        0
     }
 }
 

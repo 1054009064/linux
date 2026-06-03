@@ -40,6 +40,7 @@ use crate::{
     regs,
 };
 
+pub(crate) mod fsp;
 pub(crate) mod gsp;
 mod hal;
 pub(crate) mod sec2;
@@ -488,7 +489,7 @@ impl<E: FalconEngine + 'static> Falcon<E> {
         }
         self.pio_wr_dmem_slice(bar, fw.dmem_load_params())?;
 
-        self.hal.program_brom(self, bar, &fw.brom_params())?;
+        self.hal.program_brom(self, bar, &fw.brom_params());
 
         bar.write(
             WithBase::of::<E>(),
@@ -647,7 +648,7 @@ impl<E: FalconEngine + 'static> Falcon<E> {
         )?;
         self.dma_wr(bar, &dma_obj, FalconMem::Dmem, fw.dmem_load_params())?;
 
-        self.hal.program_brom(self, bar, &fw.brom_params())?;
+        self.hal.program_brom(self, bar, &fw.brom_params());
 
         // Set `BootVec` to start of non-secure code.
         bar.write(

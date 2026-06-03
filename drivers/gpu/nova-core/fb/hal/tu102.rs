@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0
+// SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 
 use kernel::{
     io::Io,
-    prelude::*, //
+    prelude::*,
+    sizes::*, //
 };
 
 use crate::{
@@ -38,6 +40,18 @@ pub(super) fn vidmem_size_gp102(bar: &Bar0) -> u64 {
         .usable_fb_size()
 }
 
+pub(super) const fn pmu_reserved_size_tu102() -> u32 {
+    0
+}
+
+pub(super) const fn non_wpr_heap_size_tu102() -> u32 {
+    u32::SZ_1M
+}
+
+pub(super) const fn frts_size_tu102() -> u64 {
+    u64::SZ_1M
+}
+
 struct Tu102;
 
 impl FbHal for Tu102 {
@@ -55,6 +69,18 @@ impl FbHal for Tu102 {
 
     fn vidmem_size(&self, bar: &Bar0) -> u64 {
         vidmem_size_gp102(bar)
+    }
+
+    fn pmu_reserved_size(&self) -> u32 {
+        pmu_reserved_size_tu102()
+    }
+
+    fn non_wpr_heap_size(&self) -> u32 {
+        non_wpr_heap_size_tu102()
+    }
+
+    fn frts_size(&self) -> u64 {
+        frts_size_tu102()
     }
 }
 
