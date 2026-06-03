@@ -1947,6 +1947,7 @@ static inline struct folio *virt_to_folio(const void *x)
 }
 
 void __folio_put(struct folio *folio);
+void __folio_put_prezeroed(struct folio *folio);
 
 void split_page(struct page *page, unsigned int order);
 void folio_copy(struct folio *dst, struct folio *src);
@@ -2122,6 +2123,17 @@ static inline void folio_put(struct folio *folio)
 {
 	if (folio_put_testzero(folio))
 		__folio_put(folio);
+}
+
+static inline void folio_put_prezeroed(struct folio *folio)
+{
+	if (folio_put_testzero(folio))
+		__folio_put_prezeroed(folio);
+}
+
+static inline void put_page_prezeroed(struct page *page)
+{
+	folio_put_prezeroed(page_folio(page));
 }
 
 /**
@@ -5088,6 +5100,9 @@ long copy_folio_from_user(struct folio *dst_folio,
 			   const void __user *usr_src,
 			   bool allow_pagefault);
 
+#else /* !CONFIG_TRANSPARENT_HUGEPAGE && !CONFIG_HUGETLBFS */
+#define folio_zero_user(folio, addr_hint) \
+	clear_user_highpages(&(folio)->page, (addr_hint), folio_nr_pages(folio))
 #endif /* CONFIG_TRANSPARENT_HUGEPAGE || CONFIG_HUGETLBFS */
 
 #if MAX_NUMNODES > 1
@@ -5182,6 +5197,34 @@ static inline bool user_alloc_needs_zeroing(void)
 	return cpu_dcache_is_aliasing() || cpu_icache_is_aliasing() ||
 	       !static_branch_maybe(CONFIG_INIT_ON_ALLOC_DEFAULT_ON,
 				   &init_on_alloc);
+}
+
+/**
+ * __page_test_clear_prezeroed - test and clear the pre-zeroed marker.
+ * @page: the page to test.
+ *
+ * Returns true if the page was pre-zeroed by the host, and clears
+ * the marker. Caller must have exclusive access to @page.
+ */
+static inline bool __page_test_clear_prezeroed(struct page *page)
+{
+	if (PagePrezeroed(page)) {
+		__ClearPagePrezeroed(page);
+		return true;
+	}
+	return false;
+}
+
+/**
+ * folio_test_clear_prezeroed - test and clear the pre-zeroed marker.
+ * @folio: the folio to test.
+ *
+ * Returns true if the folio was pre-zeroed by the host, and clears
+ * the marker.  Callers can skip their own zeroing.
+ */
+static inline bool folio_test_clear_prezeroed(struct folio *folio)
+{
+	return __page_test_clear_prezeroed(&folio->page);
 }
 
 int arch_get_shadow_stack_status(struct task_struct *t, unsigned long __user *status);
