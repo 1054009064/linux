@@ -511,6 +511,11 @@ struct ieee80211_fragment_cache {
  * @rx_omi_bw_tx: RX OMI bandwidth restriction to apply for TX
  * @rx_omi_bw_staging: RX OMI bandwidth restriction to apply later
  *	during finalize
+ * @uhr_usable_tx_width: bandwidth restriction for UHR for TX, only when
+ *	the link_sta is an AP, to restrict TX to BSS width during DBE
+ *	enablement
+ * @uhr_dbe_enabled: for STAs as clients to an AP interface indicates
+ *	DBE is enabled by the STA
  * @debugfs_dir: debug filesystem directory dentry
  * @pub: public (driver visible) link STA data
  */
@@ -562,6 +567,9 @@ struct link_sta_info {
 	enum ieee80211_sta_rx_bandwidth rx_omi_bw_rx,
 					rx_omi_bw_tx,
 					rx_omi_bw_staging;
+	enum ieee80211_sta_rx_bandwidth uhr_usable_tx_width;
+
+	bool uhr_dbe_enabled;
 
 #ifdef CONFIG_MAC80211_DEBUGFS
 	struct dentry *debugfs_dir;
@@ -1015,6 +1023,9 @@ ieee80211_sta_current_bw(struct link_sta_info *link_sta,
 			 struct cfg80211_chan_def *chandef,
 			 enum ieee80211_sta_bw_direction direction);
 
+bool ieee80211_link_sta_update_rc_bw(struct ieee80211_link_data *link,
+				     struct link_sta_info *link_sta);
+
 enum sta_stats_type {
 	STA_STATS_RATE_TYPE_INVALID = 0,
 	STA_STATS_RATE_TYPE_LEGACY,
@@ -1042,7 +1053,7 @@ enum sta_stats_type {
 #define STA_STATS_FIELD_VHT_MCS		0x0000F000
 #define STA_STATS_FIELD_VHT_NSS		0x000F0000
 
-/* HT & VHT */
+/* HT, VHT & S1G */
 #define STA_STATS_FIELD_SGI		0x00100000
 
 /* STA_STATS_RATE_TYPE_HE */
@@ -1066,6 +1077,9 @@ enum sta_stats_type {
 #define STA_STATS_FIELD_UHR_ELR		0x08000000
 #define STA_STATS_FIELD_UHR_IM		0x10000000
 
+/* STA_STATS_RATE_TYPE_S1G */
+#define STA_STATS_FIELD_S1G_MCS		0x0000F000
+#define STA_STATS_FIELD_S1G_NSS		0x000F0000
 
 #define STA_STATS_FIELD(_n, _v)		FIELD_PREP(STA_STATS_FIELD_ ## _n, _v)
 #define STA_STATS_GET(_n, _v)		FIELD_GET(STA_STATS_FIELD_ ## _n, _v)
@@ -1081,6 +1095,7 @@ static inline u32 sta_stats_encode_rate(struct ieee80211_rx_status *s)
 	switch (s->encoding) {
 	case RX_ENC_HT:
 	case RX_ENC_VHT:
+	case RX_ENC_S1G:
 		if (s->enc_flags & RX_ENC_FLAG_SHORT_GI)
 			r |= STA_STATS_FIELD(SGI, 1);
 		break;
@@ -1126,6 +1141,11 @@ static inline u32 sta_stats_encode_rate(struct ieee80211_rx_status *s)
 		r |= STA_STATS_FIELD(UHR_RU, s->uhr.ru);
 		r |= STA_STATS_FIELD(UHR_ELR, s->uhr.elr);
 		r |= STA_STATS_FIELD(UHR_IM, s->uhr.im);
+		break;
+	case RX_ENC_S1G:
+		r |= STA_STATS_FIELD(TYPE, STA_STATS_RATE_TYPE_S1G);
+		r |= STA_STATS_FIELD(S1G_NSS, s->nss);
+		r |= STA_STATS_FIELD(S1G_MCS, s->rate_idx);
 		break;
 	default:
 		WARN_ON(1);
