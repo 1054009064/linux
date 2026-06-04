@@ -77,7 +77,6 @@ int cifs_revalidate_dentry_attr(struct dentry *dentry);
 int cifs_revalidate_file(struct file *filp);
 int cifs_revalidate_dentry(struct dentry *dentry);
 int cifs_revalidate_mapping(struct inode *inode);
-int cifs_fileattr_get(struct dentry *dentry, struct file_kattr *fa);
 int cifs_zap_mapping(struct inode *inode);
 int cifs_getattr(struct mnt_idmap *idmap, const struct path *path,
 		 struct kstat *stat, u32 request_mask, unsigned int flags);
@@ -89,6 +88,9 @@ int cifs_fiemap(struct inode *inode, struct fiemap_extent_info *fei, u64 start,
 extern const struct inode_operations cifs_file_inode_ops;
 extern const struct inode_operations cifs_symlink_inode_ops;
 extern const struct inode_operations cifs_namespace_inode_operations;
+
+struct file_kattr;
+int cifs_fileattr_get(struct dentry *dentry, struct file_kattr *fa);
 
 
 /* Functions related to files and directories */
