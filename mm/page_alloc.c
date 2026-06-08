@@ -1246,7 +1246,7 @@ void __clear_page_tag_ref(struct page *page)
 /* Should be called only if mem_alloc_profiling_enabled() */
 static noinline
 void __pgalloc_tag_add(struct page *page, struct task_struct *task,
-		       unsigned int nr)
+		       unsigned int nr, gfp_t gfp_flags)
 {
 	union pgtag_ref_handle handle;
 	union codetag_ref ref;
@@ -1260,17 +1260,17 @@ void __pgalloc_tag_add(struct page *page, struct task_struct *task,
 		 * page_ext is not available yet, record the pfn so we can
 		 * clear the tag ref later when page_ext is initialized.
 		 */
-		alloc_tag_add_early_pfn(page_to_pfn(page));
+		alloc_tag_add_early_pfn(page_to_pfn(page), gfp_flags);
 		if (task->alloc_tag)
 			alloc_tag_set_inaccurate(task->alloc_tag);
 	}
 }
 
 static inline void pgalloc_tag_add(struct page *page, struct task_struct *task,
-				   unsigned int nr)
+				   unsigned int nr, gfp_t gfp_flags)
 {
 	if (mem_alloc_profiling_enabled())
-		__pgalloc_tag_add(page, task, nr);
+		__pgalloc_tag_add(page, task, nr, gfp_flags);
 }
 
 /* Should be called only if mem_alloc_profiling_enabled() */
@@ -1303,7 +1303,7 @@ static inline void pgalloc_tag_sub_pages(struct alloc_tag *tag, unsigned int nr)
 #else /* CONFIG_MEM_ALLOC_PROFILING */
 
 static inline void pgalloc_tag_add(struct page *page, struct task_struct *task,
-				   unsigned int nr) {}
+				   unsigned int nr, gfp_t gfp_flags) {}
 static inline void pgalloc_tag_sub(struct page *page, unsigned int nr) {}
 static inline void pgalloc_tag_sub_pages(struct alloc_tag *tag, unsigned int nr) {}
 
@@ -1858,7 +1858,7 @@ inline void post_alloc_hook(struct page *page, unsigned int order,
 
 	set_page_owner(page, order, gfp_flags);
 	page_table_check_alloc(page, order);
-	pgalloc_tag_add(page, current, 1 << order);
+	pgalloc_tag_add(page, current, 1 << order, gfp_flags);
 }
 
 static void prep_new_page(struct page *page, unsigned int order, gfp_t gfp_flags,
@@ -4161,7 +4161,8 @@ __alloc_pages_direct_compact(gfp_t gfp_mask, unsigned int order,
 	psi_memstall_leave(&pflags);
 	delayacct_compact_end();
 
-	if (*compact_result == COMPACT_SKIPPED)
+	if (*compact_result == COMPACT_SKIPPED ||
+	    *compact_result == COMPACT_DEFERRED)
 		return NULL;
 	/*
 	 * At least in one zone compaction wasn't deferred or skipped, so let's
@@ -4198,7 +4199,8 @@ __alloc_pages_direct_compact(gfp_t gfp_mask, unsigned int order,
 }
 
 static inline bool
-should_compact_retry(struct alloc_context *ac, int order, int alloc_flags,
+should_compact_retry(gfp_t gfp_mask, struct alloc_context *ac, int order,
+		     int alloc_flags,
 		     enum compact_result compact_result,
 		     enum compact_priority *compact_priority,
 		     int *compaction_retries)
@@ -4220,7 +4222,8 @@ should_compact_retry(struct alloc_context *ac, int order, int alloc_flags,
 	 * migration targets. Continue if reclaim can help.
 	 */
 	if (compact_result == COMPACT_SKIPPED) {
-		ret = compaction_zonelist_suitable(ac, order, alloc_flags);
+		ret = compaction_zonelist_suitable(ac, order, alloc_flags,
+						   gfp_mask);
 		goto out;
 	}
 
@@ -4273,7 +4276,8 @@ __alloc_pages_direct_compact(gfp_t gfp_mask, unsigned int order,
 }
 
 static inline bool
-should_compact_retry(struct alloc_context *ac, int order, int alloc_flags,
+should_compact_retry(gfp_t gfp_mask, struct alloc_context *ac, int order,
+		     int alloc_flags,
 		     enum compact_result compact_result,
 		     enum compact_priority *compact_priority,
 		     int *compaction_retries)
@@ -4940,9 +4944,9 @@ retry:
 	 * of free memory (see __compaction_suitable)
 	 */
 	if (did_some_progress > 0 && can_compact &&
-			should_compact_retry(ac, order, alloc_flags,
-				compact_result, &compact_priority,
-				&compaction_retries))
+	    should_compact_retry(gfp_mask, ac, order, alloc_flags,
+				 compact_result, &compact_priority,
+				 &compaction_retries))
 		goto retry;
 
 	/* Reclaim/compaction failed to prevent the fallback */
@@ -6649,7 +6653,8 @@ static int sysctl_min_unmapped_ratio_sysctl_handler(const struct ctl_table *tabl
 	if (rc)
 		return rc;
 
-	setup_min_unmapped_ratio();
+	if (write)
+		setup_min_unmapped_ratio();
 
 	return 0;
 }
@@ -6676,7 +6681,8 @@ static int sysctl_min_slab_ratio_sysctl_handler(const struct ctl_table *table, i
 	if (rc)
 		return rc;
 
-	setup_min_slab_ratio();
+	if (write)
+		setup_min_slab_ratio();
 
 	return 0;
 }
