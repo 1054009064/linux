@@ -269,6 +269,16 @@ static int ds1307_get_time(struct device *dev, struct rtc_time *t)
 		if (tmp & DS1338_BIT_OSF)
 			return -EINVAL;
 		break;
+	case ds_1337:
+	case ds_1339:
+	case ds_1341:
+	case ds_3231:
+		ret = regmap_read(ds1307->regmap, DS1337_REG_STATUS, &tmp);
+		if (ret)
+			return ret;
+		if (tmp & DS1337_BIT_OSF)
+			return -EINVAL;
+		break;
 	case ds_1340:
 		if (tmp & DS1340_BIT_nEOSC)
 			return -EINVAL;
@@ -277,13 +287,6 @@ static int ds1307_get_time(struct device *dev, struct rtc_time *t)
 		if (ret)
 			return ret;
 		if (tmp & DS1340_BIT_OSF)
-			return -EINVAL;
-		break;
-	case ds_1341:
-		ret = regmap_read(ds1307->regmap, DS1337_REG_STATUS, &tmp);
-		if (ret)
-			return ret;
-		if (tmp & DS1337_BIT_OSF)
 			return -EINVAL;
 		break;
 	case ds_1388:
@@ -380,13 +383,16 @@ static int ds1307_set_time(struct device *dev, struct rtc_time *t)
 		regmap_update_bits(ds1307->regmap, DS1307_REG_CONTROL,
 				   DS1338_BIT_OSF, 0);
 		break;
+	case ds_1337:
+	case ds_1339:
+	case ds_1341:
+	case ds_3231:
+		regmap_update_bits(ds1307->regmap, DS1337_REG_STATUS,
+				   DS1337_BIT_OSF, 0);
+		break;
 	case ds_1340:
 		regmap_update_bits(ds1307->regmap, DS1340_REG_FLAG,
 				   DS1340_BIT_OSF, 0);
-		break;
-	case ds_1341:
-		regmap_update_bits(ds1307->regmap, DS1337_REG_STATUS,
-				   DS1337_BIT_OSF, 0);
 		break;
 	case ds_1388:
 		regmap_update_bits(ds1307->regmap, DS1388_REG_FLAG,
@@ -1063,24 +1069,24 @@ static const struct chip_desc chips[last_ds_type] = {
 };
 
 static const struct i2c_device_id ds1307_id[] = {
-	{ "ds1307", ds_1307 },
-	{ "ds1308", ds_1308 },
-	{ "ds1337", ds_1337 },
-	{ "ds1338", ds_1338 },
-	{ "ds1339", ds_1339 },
-	{ "ds1388", ds_1388 },
-	{ "ds1340", ds_1340 },
-	{ "ds1341", ds_1341 },
-	{ "ds3231", ds_3231 },
-	{ "m41t0", m41t0 },
-	{ "m41t00", m41t00 },
-	{ "m41t11", m41t11 },
-	{ "mcp7940x", mcp794xx },
-	{ "mcp7941x", mcp794xx },
-	{ "pt7c4338", ds_1307 },
-	{ "rx8025", rx_8025 },
-	{ "isl12057", ds_1337 },
-	{ "rx8130", rx_8130 },
+	{ .name = "ds1307", .driver_data = ds_1307 },
+	{ .name = "ds1308", .driver_data = ds_1308 },
+	{ .name = "ds1337", .driver_data = ds_1337 },
+	{ .name = "ds1338", .driver_data = ds_1338 },
+	{ .name = "ds1339", .driver_data = ds_1339 },
+	{ .name = "ds1388", .driver_data = ds_1388 },
+	{ .name = "ds1340", .driver_data = ds_1340 },
+	{ .name = "ds1341", .driver_data = ds_1341 },
+	{ .name = "ds3231", .driver_data = ds_3231 },
+	{ .name = "m41t0", .driver_data = m41t0 },
+	{ .name = "m41t00", .driver_data = m41t00 },
+	{ .name = "m41t11", .driver_data = m41t11 },
+	{ .name = "mcp7940x", .driver_data = mcp794xx },
+	{ .name = "mcp7941x", .driver_data = mcp794xx },
+	{ .name = "pt7c4338", .driver_data = ds_1307 },
+	{ .name = "rx8025", .driver_data = rx_8025 },
+	{ .name = "isl12057", .driver_data = ds_1337 },
+	{ .name = "rx8130", .driver_data = rx_8130 },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, ds1307_id);
