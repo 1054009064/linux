@@ -34,12 +34,12 @@ cifs_uniqueid_to_ino_t(u64 fileid)
 
 static inline void cifs_set_time(struct dentry *dentry, unsigned long time)
 {
-	dentry->d_fsdata = (void *) time;
+	dentry->d_time = time;
 }
 
 static inline unsigned long cifs_get_time(struct dentry *dentry)
 {
-	return (unsigned long) dentry->d_fsdata;
+	return dentry->d_time;
 }
 
 extern struct file_system_type cifs_fs_type, smb3_fs_type;
@@ -166,6 +166,6 @@ extern const struct export_operations cifs_export_ops;
 #endif /* CONFIG_CIFS_NFSD_EXPORT */
 
 /* when changing internal version - update following two lines at same time */
-#define SMB3_PRODUCT_BUILD 60
-#define CIFS_VERSION   "2.60"
+#define SMB3_PRODUCT_BUILD 61
+#define CIFS_VERSION   "2.61"
 #endif				/* _CIFSFS_H */
