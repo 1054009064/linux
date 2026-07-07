@@ -1,5 +1,6 @@
-/*
- * Copyright 2023 Advanced Micro Devices, Inc.
+/* SPDX-License-Identifier: GPL-2.0 OR MIT
+ *
+ * Copyright 2026 Advanced Micro Devices, Inc.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
  * copy of this software and associated documentation files (the "Software"),
@@ -18,22 +19,29 @@
  * OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
  * ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
  * OTHER DEALINGS IN THE SOFTWARE.
- *
  */
+#ifndef __AMDGPU_VIDEO_CODECS_H__
+#define __AMDGPU_VIDEO_CODECS_H__
 
-#ifndef __JPEG_V5_0_0_H__
-#define __JPEG_V5_0_0_H__
+#include <linux/types.h>
 
-#define vcnipJPEG_CGC_GATE                                 0x4160
-#define vcnipJPEG_CGC_CTRL                                 0x4161
-#define vcnipJPEG_SYS_INT_EN                               0x4141
-#define vcnipUVD_NO_OP                                     0x0029
-#define vcnipJPEG_DEC_GFX10_ADDR_CONFIG                    0x404A
+#define codec_info_build(type, width, height, level) \
+			 .codec_type = type,\
+			 .max_width = width,\
+			 .max_height = height,\
+			 .max_pixels_per_frame = height * width,\
+			 .max_level = level,
 
-extern const struct amdgpu_ip_block_version jpeg_v5_0_0_ip_block;
+struct amdgpu_video_codec_info {
+	u32 codec_type;
+	u32 max_width;
+	u32 max_height;
+	u32 max_pixels_per_frame;
+	u32 max_level;
+};
 
-int jpeg_v5_0_0_process_interrupt(struct amdgpu_device *adev,
-				  struct amdgpu_irq_src *source,
-				  struct amdgpu_iv_entry *entry);
-
-#endif /* __JPEG_V5_0_0_H__ */
+struct amdgpu_video_codecs {
+	const u32 codec_count;
+	const struct amdgpu_video_codec_info *codec_array;
+};
+#endif
