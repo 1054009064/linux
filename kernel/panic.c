@@ -400,12 +400,9 @@ static bool panic_try_force_cpu(const char *fmt, va_list args)
 	if (panic_in_progress())
 		return false;
 
-	/*
-	 * Only one CPU can do the redirect. Use atomic cmpxchg to ensure
-	 * we don't race with another CPU also trying to redirect.
-	 */
+	/* Which CPU won the race? */
 	if (!atomic_try_cmpxchg(&panic_redirect_cpu, &old_cpu, this_cpu))
-		return false;
+		return old_cpu != this_cpu;
 
 	/*
 	 * Use dynamically allocated buffer if available, otherwise
