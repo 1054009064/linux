@@ -72,13 +72,9 @@ ksft_exit_status_merge()
 
 timestamp_ms()
 {
-	local now
-	local seconds
-	local nanoseconds
-
-	now=$(date -u +%s:%N) || return
-	seconds=${now%:*}
-	nanoseconds=${now#*:}
+	local now=$(date -u +%s:%N)
+	local seconds=${now%:*}
+	local nanoseconds=${now#*:}
 
 	if [[ $nanoseconds =~ ^[0-9]+$ ]]; then
 		nanoseconds=${nanoseconds:0:9}
@@ -93,10 +89,9 @@ loopy_wait()
 {
 	local sleep_cmd=$1; shift
 	local timeout_ms=$1; shift
-	local start_time
 	local current_time
 
-	start_time=$(timestamp_ms) || return
+	local start_time=$(timestamp_ms)
 	while true
 	do
 		local out
@@ -105,7 +100,7 @@ loopy_wait()
 			return 0
 		fi
 
-		current_time=$(timestamp_ms) || return
+		local current_time=$(timestamp_ms)
 		if ((current_time - start_time > timeout_ms)); then
 			echo -n "$out"
 			return 1
