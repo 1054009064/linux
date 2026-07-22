@@ -2,7 +2,7 @@
 #ifndef __LINUX_BITMAP_H
 #define __LINUX_BITMAP_H
 
-#ifndef __ASSEMBLY__
+#ifndef __ASSEMBLER__
 
 #include <linux/align.h>
 #include <linux/bitops.h>
@@ -697,14 +697,6 @@ void bitmap_gather(unsigned long *dst, const unsigned long *src,
 		__assign_bit(n++, dst, test_bit(bit, src));
 }
 
-static __always_inline
-void bitmap_next_set_region(unsigned long *bitmap, unsigned int *rs,
-			    unsigned int *re, unsigned int end)
-{
-	*rs = find_next_bit(bitmap, end, *rs);
-	*re = find_next_zero_bit(bitmap, end, *rs + 1);
-}
-
 /**
  * bitmap_release_region - release allocated bitmap region
  *	@bitmap: array of unsigned longs corresponding to the bitmap
@@ -894,6 +886,6 @@ void bitmap_write(unsigned long *map, unsigned long value,
 #define bitmap_set_value8(map, value, start)		\
 	bitmap_write(map, value, start, BITS_PER_BYTE)
 
-#endif /* __ASSEMBLY__ */
+#endif /* __ASSEMBLER__ */
 
 #endif /* __LINUX_BITMAP_H */
