@@ -410,6 +410,25 @@ out:
 	return false;
 }
 
+/*
+ * Try to work out if the card was booted or not, just checks
+ * if the register reported memory amount matches what the BIOS
+ * reports for now.
+ */
+static int tdfxfb_hw_init(struct fb_info *info, struct pci_dev *pdev)
+{
+	struct tdfx_par *par = info->par;
+	struct tdfx_bios_cfg cfg;
+
+	if (tdfxfb_get_bios_cfg(pdev, &cfg) &&
+	    tdfx_inl(par, DRAMINIT0) == le32_to_cpu(cfg.draminit0))
+		return 0;
+
+	dev_err(&pdev->dev,
+		"Card hasn't booted and is unusable\n");
+	return -ENODEV;
+}
+
 static void do_write_regs(struct fb_info *info, struct banshee_reg *reg)
 {
 	struct tdfx_par *par = info->par;
@@ -1504,6 +1523,9 @@ static int tdfxfb_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 				info->fix.id);
 		goto out_err_regbase;
 	}
+
+	if (tdfxfb_hw_init(info, pdev))
+		goto out_err_regbase;
 
 	info->fix.smem_start = pci_resource_start(pdev, 1);
 	info->fix.smem_len = do_lfb_size(default_par, pdev->device);
