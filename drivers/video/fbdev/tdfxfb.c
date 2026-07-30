@@ -67,6 +67,7 @@
 #include <linux/aperture.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
+#include <linux/delay.h>
 #include <linux/errno.h>
 #include <linux/string.h>
 #include <linux/mm.h>
@@ -414,19 +415,62 @@ out:
  * Try to work out if the card was booted or not, just checks
  * if the register reported memory amount matches what the BIOS
  * reports for now.
+ *
+ * If we have a BIOS config table attempt to manually boot the
+ * card if needed.
  */
 static int tdfxfb_hw_init(struct fb_info *info, struct pci_dev *pdev)
 {
-	struct tdfx_par *par = info->par;
+	u32 mempll, gfxpll, draminit0, draminit1, miscinit1, dram_mode;
 	struct tdfx_bios_cfg cfg;
+	bool have_cfg = tdfxfb_get_bios_cfg(pdev, &cfg);
+	struct tdfx_par *par = info->par;
 
-	if (tdfxfb_get_bios_cfg(pdev, &cfg) &&
-	    tdfx_inl(par, DRAMINIT0) == le32_to_cpu(cfg.draminit0))
+	if (have_cfg && tdfx_inl(par, DRAMINIT0) == le32_to_cpu(cfg.draminit0))
 		return 0;
 
-	dev_err(&pdev->dev,
-		"Card hasn't booted and is unusable\n");
-	return -ENODEV;
+	if (have_cfg) {
+		dev_info(&pdev->dev,
+			 "Manually booting card using config table\n");
+		mempll = le32_to_cpu(cfg.pllctrl1);
+		gfxpll = le32_to_cpu(cfg.pllctrl2);
+		draminit0 = le32_to_cpu(cfg.draminit0);
+		draminit1 = le32_to_cpu(cfg.draminit1);
+		miscinit1 = le32_to_cpu(cfg.miscinit1);
+		dram_mode = le32_to_cpu(cfg.sgrammode);
+		tdfx_outl(par, PCIINIT0, le32_to_cpu(cfg.pciinit0));
+		tdfx_outl(par, AGPINIT, le32_to_cpu(cfg.agpinit0));
+	} else {
+		dev_err(&pdev->dev,
+			"Card hasn't booted and is unusable\n");
+		return -ENODEV;
+	}
+
+	/* memory clock, and the graphics clock if the card wants one */
+	tdfx_outl(par, PLLCTRL1, mempll);
+	if (gfxpll)
+		tdfx_outl(par, PLLCTRL2, gfxpll);
+	/* PLL lock */
+	udelay(100);
+
+	tdfx_outl(par, MISCINIT1, miscinit1);
+	tdfx_outl(par, DRAMINIT0, draminit0);
+	tdfx_outl(par, DRAMINIT1, draminit1);
+
+	/* Make sure the DRAM config is applied before continuing */
+	wmb();
+
+	/* SDRAM/SGRAM wake up: load the mode register */
+	tdfx_outl(par, DRAMDATA, dram_mode);
+	tdfx_outl(par, DRAMCOMMAND, 0x10d);
+
+	tdfx_outl(par, LFBMEMORYCONFIG, 0x00001fff);
+	tdfx_outl(par, MISCINIT0, 0);
+
+	/* Make sure the remaining config is applied */
+	wmb();
+
+	return 0;
 }
 
 static void do_write_regs(struct fb_info *info, struct banshee_reg *reg)
