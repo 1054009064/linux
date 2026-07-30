@@ -1692,6 +1692,13 @@ static int tdfxfb_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	 * Our driver data
 	 */
 	pci_set_drvdata(pdev, info);
+
+	/* Program a video mode so the display detects a signal */
+	tdfxfb_set_par(info);
+
+	/* Don't scare the user with random garbage on their display */
+	memset_io(info->screen_base, 0, info->fix.smem_len);
+
 	return 0;
 
 out_err_iobase:
