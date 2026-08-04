@@ -456,13 +456,13 @@ again:
 			if (pte_present(pte)) {
 				if (pte_soft_dirty(pte))
 					swp_pte = pte_swp_mksoft_dirty(swp_pte);
-				if (pte_uffd_wp(pte))
-					swp_pte = pte_swp_mkuffd_wp(swp_pte);
+				if (pte_uffd(pte))
+					swp_pte = pte_swp_mkuffd(swp_pte);
 			} else {
 				if (pte_swp_soft_dirty(pte))
 					swp_pte = pte_swp_mksoft_dirty(swp_pte);
-				if (pte_swp_uffd_wp(pte))
-					swp_pte = pte_swp_mkuffd_wp(swp_pte);
+				if (pte_swp_uffd(pte))
+					swp_pte = pte_swp_mkuffd(swp_pte);
 			}
 			set_pte_at(mm, addr, ptep, swp_pte);
 
@@ -1193,6 +1193,13 @@ static void __migrate_device_pages(unsigned long *src_pfns,
 							 MIGRATE_PFN_COMPOUND);
 					goto next;
 				}
+
+				/*
+				 * reset nr so that only first after-split folio
+				 * is processed below
+				 */
+				VM_WARN_ON_ONCE(folio_test_large(folio));
+				nr = 1;
 			} else if ((src_pfns[i] & MIGRATE_PFN_MIGRATE) &&
 				(dst_pfns[i] & MIGRATE_PFN_COMPOUND) &&
 				!(src_pfns[i] & MIGRATE_PFN_COMPOUND)) {
@@ -1231,6 +1238,12 @@ static void __migrate_device_pages(unsigned long *src_pfns,
 		for (j = 0; j < nr && i + j < npages; j++) {
 			folio = page_folio(migrate_pfn_to_page(src_pfns[i+j]));
 			newfolio = page_folio(migrate_pfn_to_page(dst_pfns[i+j]));
+
+			/*
+			 * folio_free_swap() removed the folio from the swap
+			 * cache. Refresh the saved mapping before migration.
+			 */
+			mapping = folio_mapping(folio);
 
 			r = folio_migrate_mapping(mapping, newfolio, folio, extra_cnt);
 			if (r)
