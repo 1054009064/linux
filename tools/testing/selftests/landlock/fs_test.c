@@ -44,6 +44,9 @@
 
 #include "audit.h"
 #include "common.h"
+#include "trace.h"
+
+#define TRACE_TASK "fs_test"
 
 #ifndef renameat2
 int renameat2(int olddirfd, const char *oldpath, int newdirfd,
@@ -448,6 +451,25 @@ static int test_open_rel(const int dirfd, const char *const path,
 static int test_open(const char *const path, const int flags)
 {
 	return test_open_rel(AT_FDCWD, path, flags);
+}
+
+/*
+ * Opens an anonymous O_TMPFILE inode in the directory dir.  O_TMPFILE is always
+ * combined with O_WRONLY or O_RDWR, so the caller must pass one of them in
+ * flags.
+ */
+static int test_tmpfile(const char *const dir, const int flags)
+{
+	int fd;
+
+	fd = open(dir, O_TMPFILE | flags | O_CLOEXEC, 0700);
+	if (fd < 0)
+		return errno;
+
+	if (close(fd) != 0)
+		return errno;
+
+	return 0;
 }
 
 TEST_F_FORK(layout1, no_restriction)
@@ -2140,6 +2162,238 @@ TEST_F_FORK(layout1, link)
 	ASSERT_EQ(0, link(file1_s1d3, file2_s1d3));
 }
 
+/*
+ * O_TMPFILE does not go through the path_mknod hook: vfs_tmpfile() creates the
+ * inode without calling security_path_mknod().  These tests verify that the
+ * resulting file is still mediated, via the file_open hook, so O_TMPFILE cannot
+ * be used to bypass Landlock.
+ */
+
+/*
+ * An O_TMPFILE open requires WRITE_FILE (and READ_FILE for O_RDWR) on the
+ * directory hierarchy, exactly like any other writable open.  It does not
+ * require (nor is it granted by) MAKE_REG: the anonymous inode is not yet a
+ * named file.  O_TMPFILE always implies write access, so a read-only request is
+ * rejected by the VFS with EINVAL before Landlock is consulted; Landlock must
+ * not change that into EACCES.
+ */
+TEST_F_FORK(layout1, open_tmpfile)
+{
+	const struct rule rules[] = {
+		/* Write allowed, but neither MAKE_REG nor READ_FILE. */
+		{
+			.path = dir_s1d1,
+			.access = LANDLOCK_ACCESS_FS_WRITE_FILE,
+		},
+		/* Both read and write allowed. */
+		{
+			.path = dir_s1d2,
+			.access = LANDLOCK_ACCESS_FS_READ_FILE |
+				  LANDLOCK_ACCESS_FS_WRITE_FILE,
+		},
+		/* File-creation right without write. */
+		{
+			.path = dir_s2d1,
+			.access = LANDLOCK_ACCESS_FS_MAKE_REG,
+		},
+		{},
+	};
+
+	/* Baseline: an unsandboxed O_TMPFILE open works. */
+	EXPECT_EQ(0, test_tmpfile(dir_s1d1, O_WRONLY));
+	EXPECT_EQ(0, test_tmpfile(dir_s2d1, O_RDWR));
+	EXPECT_EQ(0, test_tmpfile(dir_s3d1, O_RDWR));
+
+	/* O_TMPFILE requires write access: read-only is EINVAL at the VFS. */
+	EXPECT_EQ(EINVAL, test_tmpfile(dir_s1d1, O_RDONLY));
+
+	enforce_fs(_metadata,
+		   LANDLOCK_ACCESS_FS_READ_FILE |
+			   LANDLOCK_ACCESS_FS_WRITE_FILE |
+			   LANDLOCK_ACCESS_FS_MAKE_REG,
+		   rules);
+
+	/* Write is enough for an O_WRONLY tmpfile; MAKE_REG is not needed. */
+	EXPECT_EQ(0, test_tmpfile(dir_s1d1, O_WRONLY));
+	/* O_RDWR additionally needs READ_FILE, which is absent here. */
+	EXPECT_EQ(EACCES, test_tmpfile(dir_s1d1, O_RDWR));
+
+	/* Read and write allowed: both open modes succeed. */
+	EXPECT_EQ(0, test_tmpfile(dir_s1d2, O_WRONLY));
+	EXPECT_EQ(0, test_tmpfile(dir_s1d2, O_RDWR));
+
+	/* MAKE_REG without WRITE_FILE does not allow the open. */
+	EXPECT_EQ(EACCES, test_tmpfile(dir_s2d1, O_WRONLY));
+	EXPECT_EQ(EACCES, test_tmpfile(dir_s2d1, O_RDWR));
+
+	/* No rule at all: the open is denied. */
+	EXPECT_EQ(EACCES, test_tmpfile(dir_s3d1, O_WRONLY));
+	EXPECT_EQ(EACCES, test_tmpfile(dir_s3d1, O_RDWR));
+
+	/*
+	 * A read-only O_TMPFILE stays EINVAL under Landlock, whether the
+	 * directory is fully allowed or has no rule: the VFS rejects the flag
+	 * combination before the file_open hook, so Landlock never turns it
+	 * into EACCES.
+	 */
+	EXPECT_EQ(EINVAL, test_tmpfile(dir_s1d2, O_RDONLY));
+	EXPECT_EQ(EINVAL, test_tmpfile(dir_s3d1, O_RDONLY));
+}
+
+/*
+ * When the ruleset handles neither file read nor write access, Landlock has no
+ * opinion on an O_TMPFILE open and must not interfere with it.
+ */
+TEST_F_FORK(layout1, open_tmpfile_unhandled)
+{
+	const struct rule rules[] = {
+		{
+			.path = dir_s1d2,
+			.access = LANDLOCK_ACCESS_FS_READ_DIR,
+		},
+		{},
+	};
+
+	enforce_fs(_metadata, LANDLOCK_ACCESS_FS_READ_DIR, rules);
+
+	EXPECT_EQ(0, test_tmpfile(dir_s1d1, O_WRONLY));
+	EXPECT_EQ(0, test_tmpfile(dir_s1d3, O_RDWR));
+	EXPECT_EQ(0, test_tmpfile(dir_s3d1, O_RDWR));
+}
+
+/*
+ * Materializing an anonymous O_TMPFILE into its creation directory with
+ * linkat(AT_EMPTY_PATH) is gated by MAKE_REG on that directory, even though
+ * obtaining the writable tmpfile only required WRITE_FILE.  This is the check
+ * that stops O_TMPFILE from creating a named file where the sandbox forbids
+ * file creation.  Linking into the same directory does not involve reparenting,
+ * so REFER is not required.
+ */
+TEST_F_FORK(layout1, link_tmpfile)
+{
+	int fd;
+	const struct rule rules[] = {
+		/* Write only: the tmpfile opens but cannot be linked. */
+		{
+			.path = dir_s1d1,
+			.access = LANDLOCK_ACCESS_FS_WRITE_FILE,
+		},
+		/* Write and MAKE_REG: the tmpfile opens and can be linked. */
+		{
+			.path = dir_s2d1,
+			.access = LANDLOCK_ACCESS_FS_WRITE_FILE |
+				  LANDLOCK_ACCESS_FS_MAKE_REG,
+		},
+		{},
+	};
+
+	/* Frees names in the two directories for the new links. */
+	ASSERT_EQ(0, unlink(file1_s1d1));
+	ASSERT_EQ(0, unlink(file1_s2d1));
+
+	enforce_fs(_metadata,
+		   LANDLOCK_ACCESS_FS_WRITE_FILE | LANDLOCK_ACCESS_FS_MAKE_REG,
+		   rules);
+
+	/*
+	 * WRITE_FILE is enough to obtain the anonymous tmpfile.  linkat(2) with
+	 * AT_EMPTY_PATH needs no capability because the fd's open-time
+	 * credentials match the caller's.  Linking into the same directory does
+	 * not require REFER (no reparenting), only MAKE_REG, which is absent
+	 * here.
+	 */
+	fd = open(dir_s1d1, O_TMPFILE | O_WRONLY | O_CLOEXEC, 0700);
+	ASSERT_LE(0, fd);
+	ASSERT_EQ(-1, linkat(fd, "", AT_FDCWD, file1_s1d1, AT_EMPTY_PATH));
+	EXPECT_EQ(EACCES, errno);
+	EXPECT_EQ(0, close(fd));
+
+	/* With MAKE_REG on the directory, the same link is allowed. */
+	fd = open(dir_s2d1, O_TMPFILE | O_WRONLY | O_CLOEXEC, 0700);
+	ASSERT_LE(0, fd);
+	EXPECT_EQ(0, linkat(fd, "", AT_FDCWD, file1_s2d1, AT_EMPTY_PATH));
+	EXPECT_EQ(0, close(fd));
+}
+
+/*
+ * Linking a tmpfile into a different directory is a reparenting operation: like
+ * any cross-directory link it requires LANDLOCK_ACCESS_FS_REFER.  Without it,
+ * materializing the tmpfile outside its creation directory is denied with
+ * EXDEV, so a tmpfile cannot escape its origin hierarchy.
+ */
+TEST_F_FORK(layout1, link_tmpfile_reparent_without_refer)
+{
+	int fd;
+	const struct rule rules[] = {
+		/* Source directory: only the tmpfile open is allowed. */
+		{
+			.path = dir_s1d1,
+			.access = LANDLOCK_ACCESS_FS_WRITE_FILE,
+		},
+		/* Destination directory: file creation is allowed. */
+		{
+			.path = dir_s2d1,
+			.access = LANDLOCK_ACCESS_FS_MAKE_REG,
+		},
+		{},
+	};
+
+	/* Frees a name in the destination directory for the new link. */
+	ASSERT_EQ(0, unlink(file1_s2d1));
+
+	enforce_fs(_metadata,
+		   LANDLOCK_ACCESS_FS_WRITE_FILE | LANDLOCK_ACCESS_FS_MAKE_REG,
+		   rules);
+
+	fd = open(dir_s1d1, O_TMPFILE | O_WRONLY | O_CLOEXEC, 0700);
+	ASSERT_LE(0, fd);
+	/* Cross-directory link without REFER is denied with EXDEV. */
+	ASSERT_EQ(-1, linkat(fd, "", AT_FDCWD, file1_s2d1, AT_EMPTY_PATH));
+	EXPECT_EQ(EXDEV, errno);
+	EXPECT_EQ(0, close(fd));
+}
+
+/*
+ * With LANDLOCK_ACCESS_FS_REFER on both directories, a tmpfile created in one
+ * directory can be linked into another.  The destination needs only MAKE_REG
+ * (plus REFER), not WRITE_FILE: the reparenting check compares file access
+ * rights, and the tmpfile gains none by moving to a directory that grants only
+ * the directory-level creation right.
+ */
+TEST_F_FORK(layout1, link_tmpfile_reparent_with_refer)
+{
+	int fd;
+	const struct rule rules[] = {
+		/* Source: tmpfile open (write) and reparenting. */
+		{
+			.path = dir_s1d1,
+			.access = LANDLOCK_ACCESS_FS_WRITE_FILE |
+				  LANDLOCK_ACCESS_FS_REFER,
+		},
+		/* Destination: file creation and reparenting, but no write. */
+		{
+			.path = dir_s2d1,
+			.access = LANDLOCK_ACCESS_FS_MAKE_REG |
+				  LANDLOCK_ACCESS_FS_REFER,
+		},
+		{},
+	};
+
+	/* Frees a name in the destination directory for the new link. */
+	ASSERT_EQ(0, unlink(file1_s2d1));
+
+	enforce_fs(_metadata,
+		   LANDLOCK_ACCESS_FS_WRITE_FILE | LANDLOCK_ACCESS_FS_MAKE_REG |
+			   LANDLOCK_ACCESS_FS_REFER,
+		   rules);
+
+	fd = open(dir_s1d1, O_TMPFILE | O_WRONLY | O_CLOEXEC, 0700);
+	ASSERT_LE(0, fd);
+	/* REFER on both sides plus MAKE_REG on the destination allows it. */
+	EXPECT_EQ(0, linkat(fd, "", AT_FDCWD, file1_s2d1, AT_EMPTY_PATH));
+	EXPECT_EQ(0, close(fd));
+}
+
 static int test_rename(const char *const oldpath, const char *const newpath)
 {
 	if (rename(oldpath, newpath))
@@ -2245,6 +2499,25 @@ TEST_F_FORK(layout1, rename_file)
 			       RENAME_EXCHANGE));
 	ASSERT_EQ(0, renameat2(AT_FDCWD, file1_s2d2, AT_FDCWD, dir_s2d3,
 			       RENAME_EXCHANGE));
+}
+
+TEST_F_FORK(layout1, rename_whiteout_denied)
+{
+	/* The affected file is a FIFO. */
+	ASSERT_EQ(0, unlink(file1_s3d3));
+	ASSERT_EQ(0, mknod(file1_s3d3, S_IFIFO | 0600, 0));
+
+	/* Deny MAKE_REG, but allow MAKE_FIFO. */
+	enforce_fs(_metadata, LANDLOCK_ACCESS_FS_MAKE_REG, NULL);
+
+	/*
+	 * Try to rename a file with RENAME_WHITEOUT.
+	 * file1_s3d3 is in dir_s3d2 (tmpfs), so it supports RENAME_WHITEOUT.
+	 * Denied, because whiteout creation is guarded with MAKE_REG.
+	 */
+	EXPECT_EQ(-1, renameat2(AT_FDCWD, file1_s3d3, AT_FDCWD,
+				TMP_DIR "/s3d1/s3d2/s3d3/f2", RENAME_WHITEOUT));
+	EXPECT_EQ(EACCES, errno);
 }
 
 TEST_F_FORK(layout1, rename_dir)
@@ -3268,6 +3541,13 @@ TEST_F_FORK(layout1, make_char)
 	set_cap(_metadata, CAP_MKNOD);
 	test_make_file(_metadata, LANDLOCK_ACCESS_FS_MAKE_CHAR, S_IFCHR,
 		       makedev(1, 3));
+}
+
+TEST_F_FORK(layout1, make_whiteout)
+{
+	/* Creates a whiteout object (creation guarded by MAKE_REG). */
+	test_make_file(_metadata, LANDLOCK_ACCESS_FS_MAKE_REG, S_IFCHR,
+		       makedev(0, 0));
 }
 
 TEST_F_FORK(layout1, make_block)
@@ -6927,7 +7207,7 @@ TEST_F_FORK(layout2_overlay, same_content_different_file)
 		ASSERT_EQ(0, test_open(path_entry, O_RDWR));
 	}
 
-	/* Only allowes access to the merge hierarchy. */
+	/* Only allows access to the merge hierarchy. */
 	enforce_fs(_metadata, ACCESS_RW, layer5_merge_only);
 
 	/* Checks new accesses on lower layer. */
@@ -6949,6 +7229,46 @@ TEST_F_FORK(layout2_overlay, same_content_different_file)
 	for_each_path(merge_sub_files, path_entry, i) {
 		ASSERT_EQ(0, test_open(path_entry, O_RDWR));
 	}
+}
+
+TEST_F_FORK(layout2_overlay, rename_in_overlay_without_make_reg)
+{
+	struct stat st;
+	const char *merge_fl1_renamed = MERGE_DATA "/fl1_renamed";
+
+	if (self->skip_test)
+		SKIP(return, "overlayfs is not supported (test)");
+
+	/*
+	 * In this test, merge_fl1 is a FIFO file.  MAKE_REG is restricted, but
+	 * MAKE_FIFO is allowed.  Despite MAKE_REG being restricted, the rename
+	 * on the OverlayFS works and creates a whiteout file in the underlying
+	 * upper file system.
+	 */
+	ASSERT_EQ(0, unlink(merge_fl1));
+	ASSERT_EQ(0, mknod(merge_fl1, S_IFIFO, 0));
+	enforce_fs(_metadata, LANDLOCK_ACCESS_FS_MAKE_REG, NULL);
+
+	/*
+	 * Execute a regular file rename within OverlayFS.
+	 * merge_fl1 originates from lower layer, so this triggers a copy-up
+	 * and creation of a whiteout in the upper layer.
+	 */
+	EXPECT_EQ(0, rename(merge_fl1, merge_fl1_renamed));
+
+	/* Check that the rename worked. */
+	EXPECT_EQ(0, stat(merge_fl1_renamed, &st));
+	EXPECT_EQ(-1, stat(merge_fl1, &st));
+	EXPECT_EQ(ENOENT, errno);
+
+	/*
+	 * Check that the whiteout object on the underlying "upper" filesystem
+	 * exists after the rename.  This is OK because it was done with the
+	 * credentials of the OverlayFS.
+	 */
+	EXPECT_EQ(0, stat(UPPER_DATA "/fl1", &st));
+	EXPECT_TRUE(S_ISCHR(st.st_mode));
+	EXPECT_EQ(0, st.st_rdev);
 }
 
 FIXTURE(layout3_fs)
@@ -7436,7 +7756,7 @@ TEST_F(audit_layout1, make_char)
 
 	enforce_fs(_metadata, ACCESS_ALL, NULL);
 
-	EXPECT_EQ(-1, mknod(file1_s1d3, S_IFCHR | 0644, 0));
+	EXPECT_EQ(-1, mknod(file1_s1d3, S_IFCHR | 0644, makedev(7, 0)));
 	EXPECT_EQ(EACCES, errno);
 	EXPECT_EQ(0, matches_log_fs(_metadata, self->audit_fd, "fs\\.make_char",
 				    dir_s1d3));
@@ -10187,6 +10507,486 @@ TEST_F(audit_quiet_rename, quiet_behind_mountpoint_disconnected)
 
 	EXPECT_EQ(0, audit_count_records(self->audit_fd, &records));
 	ASSERT_EQ(0, records.access);
+}
+
+/* clang-format off */
+FIXTURE(trace_layout1) {
+	/* clang-format on */
+	int tracefs_ok;
+};
+
+FIXTURE_SETUP(trace_layout1)
+{
+	struct stat st;
+
+	/*
+	 * Check tracefs availability before creating the layout, following the
+	 * layout3_fs pattern: skip before any layout creation to avoid leaving
+	 * stale TMP_DIR on skip.
+	 */
+	if (stat(TRACEFS_LANDLOCK_DIR, &st)) {
+		self->tracefs_ok = 0;
+		SKIP(return, "tracefs not available");
+	}
+	self->tracefs_ok = 1;
+
+	/* Isolate tracefs state (PID filter, event enables). */
+	set_cap(_metadata, CAP_SYS_ADMIN);
+	ASSERT_EQ(0, unshare(CLONE_NEWNS));
+	ASSERT_EQ(0, mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL));
+	clear_cap(_metadata, CAP_SYS_ADMIN);
+
+	prepare_layout(_metadata);
+	create_layout1(_metadata);
+
+	set_cap(_metadata, CAP_DAC_OVERRIDE);
+	ASSERT_EQ(0, tracefs_fixture_setup());
+	ASSERT_EQ(0, tracefs_enable_event(TRACEFS_CHECK_RULE_FS_ENABLE, true));
+	ASSERT_EQ(0, tracefs_clear());
+	ASSERT_EQ(0, tracefs_set_pid_filter(getpid()));
+	clear_cap(_metadata, CAP_DAC_OVERRIDE);
+}
+
+FIXTURE_TEARDOWN_PARENT(trace_layout1)
+{
+	if (!self->tracefs_ok)
+		return;
+
+	set_cap(_metadata, CAP_DAC_OVERRIDE);
+	tracefs_enable_event(TRACEFS_CHECK_RULE_FS_ENABLE, false);
+	tracefs_clear_pid_filter();
+	tracefs_fixture_teardown();
+	clear_cap(_metadata, CAP_DAC_OVERRIDE);
+
+	remove_layout1(_metadata);
+	cleanup_layout(_metadata);
+}
+
+/*
+ * Verifies that check_rule_fs events include correct field values: domain, dev,
+ * ino, access_request, and grants.  All values are verified against stat() of
+ * the rule path on a deterministic tmpfs layout.
+ */
+TEST_F(trace_layout1, check_rule_fs_fields)
+{
+	struct stat dir_stat;
+	char expected_dev[32];
+	char expected_ino[32];
+	char *buf;
+	char field[64];
+
+	if (!self->tracefs_ok)
+		SKIP(return, "tracefs not available");
+
+	ASSERT_EQ(0, stat(dir_s1d1, &dir_stat));
+	snprintf(expected_dev, sizeof(expected_dev), "%u:%u",
+		 major(dir_stat.st_dev), minor(dir_stat.st_dev));
+	snprintf(expected_ino, sizeof(expected_ino), "%lu", dir_stat.st_ino);
+
+	set_cap(_metadata, CAP_DAC_OVERRIDE);
+	ASSERT_EQ(0, tracefs_clear());
+	clear_cap(_metadata, CAP_DAC_OVERRIDE);
+
+	sandbox_child_fs_access(_metadata, dir_s1d1,
+				LANDLOCK_ACCESS_FS_READ_DIR,
+				LANDLOCK_ACCESS_FS_READ_DIR, dir_s1d1);
+
+	set_cap(_metadata, CAP_DAC_OVERRIDE);
+	buf = tracefs_read_trace();
+	clear_cap(_metadata, CAP_DAC_OVERRIDE);
+	ASSERT_NE(NULL, buf);
+
+	EXPECT_EQ(1,
+		  tracefs_count_matches(buf, REGEX_CHECK_RULE_FS(TRACE_TASK)))
+	{
+		TH_LOG("Expected 1 check_rule_fs event\n%s", buf);
+	}
+
+	ASSERT_EQ(0, tracefs_extract_field(buf, REGEX_CHECK_RULE_FS(TRACE_TASK),
+					   "dev", field, sizeof(field)));
+	EXPECT_STREQ(expected_dev, field)
+	{
+		TH_LOG("Expected dev=%s, got %s", expected_dev, field);
+	}
+
+	ASSERT_EQ(0, tracefs_extract_field(buf, REGEX_CHECK_RULE_FS(TRACE_TASK),
+					   "ino", field, sizeof(field)));
+	EXPECT_STREQ(expected_ino, field)
+	{
+		TH_LOG("Expected ino=%s, got %s", expected_ino, field);
+	}
+
+	ASSERT_EQ(0, tracefs_extract_field(buf, REGEX_CHECK_RULE_FS(TRACE_TASK),
+					   "access_request", field,
+					   sizeof(field)));
+	EXPECT_STREQ("read_dir", field)
+	{
+		TH_LOG("Expected access_request=read_dir, got %s", field);
+	}
+
+	/*
+	 * The domain handles only READ_DIR, so the rule carries the
+	 * unhandled-rights padding; intersecting with the request leaves just
+	 * the requested read_dir (no padding, no hex).
+	 */
+	ASSERT_EQ(0, tracefs_extract_field(buf, REGEX_CHECK_RULE_FS(TRACE_TASK),
+					   "grants", field, sizeof(field)));
+	EXPECT_STREQ("{read_dir}", field)
+	{
+		TH_LOG("Expected grants={read_dir}, got %s", field);
+	}
+
+	free(buf);
+}
+
+/*
+ * Verifies check_rule_fs behavior with multiple rules.  With rules at s1d1 and
+ * s1d2 (a child of s1d1), accessing s1d2 produces only 1 event because the
+ * pathwalk short-circuits after the first rule fully unmasks the single layer.
+ */
+TEST_F(trace_layout1, check_rule_fs_multiple_rules)
+{
+	pid_t pid;
+	int status;
+	char *buf;
+	int count;
+
+	if (!self->tracefs_ok)
+		SKIP(return, "tracefs not available");
+
+	set_cap(_metadata, CAP_DAC_OVERRIDE);
+	ASSERT_EQ(0, tracefs_clear());
+	clear_cap(_metadata, CAP_DAC_OVERRIDE);
+
+	pid = fork();
+	ASSERT_LE(0, pid);
+
+	if (pid == 0) {
+		struct landlock_ruleset_attr attr = {
+			.handled_access_fs = LANDLOCK_ACCESS_FS_READ_DIR,
+		};
+		struct landlock_path_beneath_attr path_beneath = {
+			.allowed_access = LANDLOCK_ACCESS_FS_READ_DIR,
+		};
+		int ruleset_fd, fd;
+
+		ruleset_fd = landlock_create_ruleset(&attr, sizeof(attr), 0);
+		if (ruleset_fd < 0)
+			_exit(1);
+
+		path_beneath.parent_fd =
+			open(dir_s1d1, O_PATH | O_DIRECTORY | O_CLOEXEC);
+		if (path_beneath.parent_fd < 0)
+			_exit(1);
+		if (landlock_add_rule(ruleset_fd, LANDLOCK_RULE_PATH_BENEATH,
+				      &path_beneath, 0))
+			_exit(1);
+		close(path_beneath.parent_fd);
+
+		path_beneath.parent_fd =
+			open(dir_s1d2, O_PATH | O_DIRECTORY | O_CLOEXEC);
+		if (path_beneath.parent_fd < 0)
+			_exit(1);
+		if (landlock_add_rule(ruleset_fd, LANDLOCK_RULE_PATH_BENEATH,
+				      &path_beneath, 0))
+			_exit(1);
+		close(path_beneath.parent_fd);
+
+		prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0);
+		if (landlock_restrict_self(ruleset_fd, 0))
+			_exit(1);
+		close(ruleset_fd);
+
+		fd = open(dir_s1d2, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+		if (fd >= 0)
+			close(fd);
+		_exit(0);
+	}
+
+	ASSERT_EQ(pid, waitpid(pid, &status, 0));
+	ASSERT_TRUE(WIFEXITED(status));
+	EXPECT_EQ(0, WEXITSTATUS(status));
+
+	set_cap(_metadata, CAP_DAC_OVERRIDE);
+	buf = tracefs_read_trace();
+	clear_cap(_metadata, CAP_DAC_OVERRIDE);
+	ASSERT_NE(NULL, buf);
+
+	/*
+	 * Only 1 check_rule_fs event: the rule on dir_s1d2 fully unmasked the
+	 * single layer, so the pathwalk short-circuits before reaching the
+	 * dir_s1d1 rule.
+	 */
+	count = tracefs_count_matches(buf, REGEX_CHECK_RULE_FS(TRACE_TASK));
+	EXPECT_EQ(1, count)
+	{
+		TH_LOG("Expected 1 check_rule_fs event, got %d\n%s", count,
+		       buf);
+	}
+
+	free(buf);
+}
+
+/*
+ * Verifies the grants array is intersected with the request: a handled,
+ * granted, but unrequested right (execute) is filtered out, leaving only the
+ * requested read_dir.
+ */
+TEST_F(trace_layout1, check_rule_fs_request_subset)
+{
+	char *buf;
+	char field[64];
+
+	if (!self->tracefs_ok)
+		SKIP(return, "tracefs not available");
+
+	set_cap(_metadata, CAP_DAC_OVERRIDE);
+	ASSERT_EQ(0, tracefs_clear());
+	clear_cap(_metadata, CAP_DAC_OVERRIDE);
+
+	/*
+	 * Handle and grant READ_DIR|EXECUTE; the open only requests read_dir.
+	 */
+	sandbox_child_fs_access(
+		_metadata, dir_s1d1,
+		LANDLOCK_ACCESS_FS_READ_DIR | LANDLOCK_ACCESS_FS_EXECUTE,
+		LANDLOCK_ACCESS_FS_READ_DIR | LANDLOCK_ACCESS_FS_EXECUTE,
+		dir_s1d1);
+
+	set_cap(_metadata, CAP_DAC_OVERRIDE);
+	buf = tracefs_read_trace();
+	clear_cap(_metadata, CAP_DAC_OVERRIDE);
+	ASSERT_NE(NULL, buf);
+
+	ASSERT_EQ(0, tracefs_extract_field(buf, REGEX_CHECK_RULE_FS(TRACE_TASK),
+					   "access_request", field,
+					   sizeof(field)));
+	EXPECT_STREQ("read_dir", field);
+
+	ASSERT_EQ(0, tracefs_extract_field(buf, REGEX_CHECK_RULE_FS(TRACE_TASK),
+					   "grants", field, sizeof(field)));
+	EXPECT_STREQ("{read_dir}", field);
+
+	free(buf);
+}
+
+/*
+ * Verifies that the optional TRUNCATE access right, which hook_file_open()
+ * speculatively evaluates on every open, appears in the access_request= and
+ * grants= fields.  Opening file1_s1d1 read-only needs only read_file, but the
+ * open hook also evaluates truncate; the domain handles and the rule grants
+ * both, so the event reports access_request=read_file|truncate and
+ * grants={read_file|truncate}, and the open is allowed.
+ */
+TEST_F(trace_layout1, check_rule_fs_optional_access)
+{
+	pid_t pid;
+	int status;
+	char *buf;
+	char field[64];
+	int count;
+
+	if (!self->tracefs_ok)
+		SKIP(return, "tracefs not available");
+
+	set_cap(_metadata, CAP_DAC_OVERRIDE);
+	ASSERT_EQ(0, tracefs_clear());
+	clear_cap(_metadata, CAP_DAC_OVERRIDE);
+
+	pid = fork();
+	ASSERT_LE(0, pid);
+
+	if (pid == 0) {
+		struct landlock_ruleset_attr attr = {
+			.handled_access_fs = LANDLOCK_ACCESS_FS_READ_FILE |
+					     LANDLOCK_ACCESS_FS_TRUNCATE,
+		};
+		struct landlock_path_beneath_attr path_beneath = {
+			.allowed_access = LANDLOCK_ACCESS_FS_READ_FILE |
+					  LANDLOCK_ACCESS_FS_TRUNCATE,
+		};
+		int ruleset_fd, fd;
+
+		ruleset_fd = landlock_create_ruleset(&attr, sizeof(attr), 0);
+		if (ruleset_fd < 0)
+			_exit(1);
+
+		path_beneath.parent_fd =
+			open(dir_s1d1, O_PATH | O_DIRECTORY | O_CLOEXEC);
+		if (path_beneath.parent_fd < 0)
+			_exit(1);
+		if (landlock_add_rule(ruleset_fd, LANDLOCK_RULE_PATH_BENEATH,
+				      &path_beneath, 0))
+			_exit(1);
+		close(path_beneath.parent_fd);
+
+		prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0);
+		if (landlock_restrict_self(ruleset_fd, 0))
+			_exit(1);
+		close(ruleset_fd);
+
+		/* Read-only open needs only read_file; truncate is optional. */
+		fd = open(file1_s1d1, O_RDONLY | O_CLOEXEC);
+		if (fd < 0)
+			_exit(1);
+		close(fd);
+		_exit(0);
+	}
+
+	ASSERT_EQ(pid, waitpid(pid, &status, 0));
+	ASSERT_TRUE(WIFEXITED(status));
+	/* The open is allowed: the required read_file is granted. */
+	EXPECT_EQ(0, WEXITSTATUS(status));
+
+	set_cap(_metadata, CAP_DAC_OVERRIDE);
+	buf = tracefs_read_trace();
+	clear_cap(_metadata, CAP_DAC_OVERRIDE);
+	ASSERT_NE(NULL, buf);
+
+	/* The rule at dir_s1d1 matches when opening file1_s1d1. */
+	count = tracefs_count_matches(buf, REGEX_CHECK_RULE_FS(TRACE_TASK));
+	EXPECT_EQ(1, count)
+	{
+		TH_LOG("Expected 1 check_rule_fs event, got %d\n%s", count,
+		       buf);
+	}
+
+	/* The open hook adds the optional truncate to the request. */
+	ASSERT_EQ(0, tracefs_extract_field(buf, REGEX_CHECK_RULE_FS(TRACE_TASK),
+					   "access_request", field,
+					   sizeof(field)));
+	EXPECT_STREQ("read_file|truncate", field);
+
+	/* The rule grants both, so truncate appears in the grants array. */
+	ASSERT_EQ(0, tracefs_extract_field(buf, REGEX_CHECK_RULE_FS(TRACE_TASK),
+					   "grants", field, sizeof(field)));
+	EXPECT_STREQ("{read_file|truncate}", field);
+
+	free(buf);
+}
+
+/*
+ * Verifies that check_rule_fs fires for a rule that matches the inode even when
+ * it grants none of the requested rights, so the grants set is empty.  Landlock
+ * cannot know a rule ignores the request before reading it, so the event is
+ * still emitted (grants={}), which lets a tracer see that the rule matched.
+ * The domain handles READ_DIR|EXECUTE, dir_s1d2 grants only EXECUTE and its
+ * parent dir_s1d1 grants only READ_DIR.  Reading dir_s1d2 (requesting read_dir)
+ * first matches the dir_s1d2 rule, which grants nothing requested (grants={});
+ * walking up to dir_s1d1 then grants read_dir (grants={read_dir}) and allows
+ * the access.
+ */
+TEST_F(trace_layout1, check_rule_fs_empty_grant)
+{
+	pid_t pid;
+	int status;
+	char *buf;
+	int count;
+
+	if (!self->tracefs_ok)
+		SKIP(return, "tracefs not available");
+
+	set_cap(_metadata, CAP_DAC_OVERRIDE);
+	ASSERT_EQ(0, tracefs_clear());
+	clear_cap(_metadata, CAP_DAC_OVERRIDE);
+
+	pid = fork();
+	ASSERT_LE(0, pid);
+
+	if (pid == 0) {
+		struct landlock_ruleset_attr attr = {
+			.handled_access_fs = LANDLOCK_ACCESS_FS_READ_DIR |
+					     LANDLOCK_ACCESS_FS_EXECUTE,
+		};
+		struct landlock_path_beneath_attr path_beneath = {};
+		int ruleset_fd, fd;
+
+		ruleset_fd = landlock_create_ruleset(&attr, sizeof(attr), 0);
+		if (ruleset_fd < 0)
+			_exit(1);
+
+		/* Parent dir_s1d1 grants only READ_DIR. */
+		path_beneath.allowed_access = LANDLOCK_ACCESS_FS_READ_DIR;
+		path_beneath.parent_fd =
+			open(dir_s1d1, O_PATH | O_DIRECTORY | O_CLOEXEC);
+		if (path_beneath.parent_fd < 0)
+			_exit(1);
+		if (landlock_add_rule(ruleset_fd, LANDLOCK_RULE_PATH_BENEATH,
+				      &path_beneath, 0))
+			_exit(1);
+		close(path_beneath.parent_fd);
+
+		/* Child dir_s1d2 grants only EXECUTE. */
+		path_beneath.allowed_access = LANDLOCK_ACCESS_FS_EXECUTE;
+		path_beneath.parent_fd =
+			open(dir_s1d2, O_PATH | O_DIRECTORY | O_CLOEXEC);
+		if (path_beneath.parent_fd < 0)
+			_exit(1);
+		if (landlock_add_rule(ruleset_fd, LANDLOCK_RULE_PATH_BENEATH,
+				      &path_beneath, 0))
+			_exit(1);
+		close(path_beneath.parent_fd);
+
+		prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0);
+		if (landlock_restrict_self(ruleset_fd, 0))
+			_exit(1);
+		close(ruleset_fd);
+
+		fd = open(dir_s1d2, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+		if (fd < 0)
+			_exit(1);
+		close(fd);
+		_exit(0);
+	}
+
+	ASSERT_EQ(pid, waitpid(pid, &status, 0));
+	ASSERT_TRUE(WIFEXITED(status));
+	EXPECT_EQ(0, WEXITSTATUS(status));
+
+	set_cap(_metadata, CAP_DAC_OVERRIDE);
+	buf = tracefs_read_trace();
+	clear_cap(_metadata, CAP_DAC_OVERRIDE);
+	ASSERT_NE(NULL, buf);
+
+	/*
+	 * dir_s1d2 (grants nothing requested) then dir_s1d1 (grants read_dir).
+	 */
+	count = tracefs_count_matches(buf, REGEX_CHECK_RULE_FS(TRACE_TASK));
+	EXPECT_EQ(2, count)
+	{
+		TH_LOG("Expected 2 check_rule_fs events, got %d\n%s", count,
+		       buf);
+	}
+
+	/* The dir_s1d2 rule matches the inode but grants none of read_dir. */
+	EXPECT_EQ(
+		1,
+		tracefs_count_matches(
+			buf,
+			TRACE_PREFIX(
+				TRACE_TASK) "landlock_check_rule_fs: domain=[0-9a-f]\\+ "
+					    "access_request=read_dir "
+					    "dev=[0-9]\\+:[0-9]\\+ ino=[0-9]\\+ "
+					    "grants={}$"))
+	{
+		TH_LOG("Expected a grants={} event\n%s", buf);
+	}
+
+	/* Walking up to dir_s1d1 grants the requested read_dir. */
+	EXPECT_EQ(
+		1,
+		tracefs_count_matches(
+			buf,
+			TRACE_PREFIX(
+				TRACE_TASK) "landlock_check_rule_fs: domain=[0-9a-f]\\+ "
+					    "access_request=read_dir "
+					    "dev=[0-9]\\+:[0-9]\\+ ino=[0-9]\\+ "
+					    "grants={read_dir}$"))
+	{
+		TH_LOG("Expected a grants={read_dir} event\n%s", buf);
+	}
+
+	free(buf);
 }
 
 TEST_HARNESS_MAIN
