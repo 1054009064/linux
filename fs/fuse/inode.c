@@ -1272,6 +1272,7 @@ static void process_init_reply(struct fuse_args *args, int error)
 	struct fuse_mount *fm = ia->fm;
 	struct fuse_conn *fc = fm->fc;
 	struct fuse_init_out *arg = &ia->out;
+	bool io_uring_enabled = false;
 	bool ok = true;
 
 	if (error || arg->major != FUSE_KERNEL_VERSION)
@@ -1402,7 +1403,7 @@ static void process_init_reply(struct fuse_args *args, int error)
 					ok = false;
 			}
 			if (flags & FUSE_OVER_IO_URING && fuse_uring_enabled())
-				fuse_chan_io_uring_enable(fc->chan);
+				io_uring_enabled = true;
 
 			if (flags & FUSE_REQUEST_TIMEOUT)
 				timeout = arg->request_timeout;
@@ -1416,6 +1417,7 @@ static void process_init_reply(struct fuse_args *args, int error)
 
 		fm->sb->s_bdi->ra_pages =
 				min(fm->sb->s_bdi->ra_pages, ra_pages);
+		fm->sb->s_bdi->io_pages = fc->max_pages;
 		fc->minor = arg->minor;
 		fc->max_write = arg->minor < 5 ? 4096 : arg->max_write;
 		fc->max_write = max_t(unsigned, 4096, fc->max_write);
@@ -1432,6 +1434,7 @@ static void process_init_reply(struct fuse_args *args, int error)
 			.minor = fc->minor,
 			.max_write = fc->max_write,
 			.max_pages = fc->max_pages,
+			.io_uring_enabled = io_uring_enabled,
 		};
 		fuse_chan_set_initialized(fc->chan, &cp);
 	}
@@ -1479,7 +1482,7 @@ static struct fuse_init_args *fuse_new_init(struct fuse_mount *fm)
 	 * the reply - server is either sending IORING_OP_URING_CMD or not.
 	 */
 	if (fuse_uring_enabled())
-		flags |= FUSE_OVER_IO_URING;
+		flags |= FUSE_OVER_IO_URING | FUSE_HAS_IO_URING_BUFPOOL;
 
 	ia->in.flags = flags;
 	ia->in.flags2 = flags >> 32;
