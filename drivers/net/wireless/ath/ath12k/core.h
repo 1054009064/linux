@@ -1420,6 +1420,12 @@ static inline struct ath12k_base *ath12k_ag_to_ab(struct ath12k_hw_group *ag,
 	return ag->ab[device_id];
 }
 
+static inline bool ath12k_is_11be_enabled(struct ath12k_base *ab)
+{
+	return test_bit(WMI_TLV_SERVICE_11BE, ab->wmi_ab.svc_map) &&
+	       !ath12k_acpi_get_disable_11be(ab);
+}
+
 static inline s32 ath12k_pdev_get_noise_floor(struct ath12k *ar)
 {
 	lockdep_assert_held(&ar->data_lock);
