@@ -2571,6 +2571,16 @@ static inline unsigned long ieee80211_tu_to_usec(unsigned long tu)
 	return 1024 * tu;
 }
 
+/**
+ * ieee80211_tu_to_ktime - convert time units (TU) to ktime_t
+ * @tu: the TUs
+ * Return: the time value converted to ktime_t (nanoseconds)
+ */
+static inline ktime_t ieee80211_tu_to_ktime(unsigned long tu)
+{
+	return us_to_ktime(ieee80211_tu_to_usec(tu));
+}
+
 static inline bool __ieee80211_check_tim(const struct ieee80211_tim_ie *tim,
 					 u8 tim_len, u16 aid)
 {

@@ -3478,7 +3478,7 @@ ieee80211_sta_process_chanswitch(struct ieee80211_link_data *link,
 	/* we may have to handle timeout for deactivated link in software */
 	now = ktime_get_boottime();
 	csa_time_tu = (max_t(int, csa_ie.count, 1) - 1) * link->conf->beacon_int;
-	link->u.mgd.csa.time = now + us_to_ktime(ieee80211_tu_to_usec(csa_time_tu));
+	link->u.mgd.csa.time = now + ieee80211_tu_to_ktime(csa_time_tu);
 
 	if (ieee80211_vif_link_active(&sdata->vif, link->link_id) &&
 	    local->ops->channel_switch) {
@@ -7789,7 +7789,7 @@ static void ieee80211_ml_reconfiguration(struct ieee80211_sub_if_data *sdata,
 	sdata->u.mgd.removed_links = removed_links;
 	wiphy_hrtimer_work_queue(sdata->local->hw.wiphy,
 				 &sdata->u.mgd.ml_reconf_work,
-				 us_to_ktime(ieee80211_tu_to_usec(delay)));
+				 ieee80211_tu_to_ktime(delay));
 }
 
 static int ieee80211_ttlm_set_links(struct ieee80211_sub_if_data *sdata,
