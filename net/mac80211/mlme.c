@@ -45,7 +45,7 @@
 #define IEEE80211_ASSOC_TIMEOUT_SHORT	(HZ / 10)
 #define IEEE80211_ASSOC_MAX_TRIES	3
 
-#define IEEE80211_ADV_TTLM_SAFETY_BUFFER_MS (100 * USEC_PER_MSEC)
+#define IEEE80211_ADV_TTLM_SAFETY_BUFFER	(100 * USEC_PER_MSEC)
 #define IEEE80211_ADV_TTLM_ST_UNDERFLOW 0xff00
 
 #define IEEE80211_NEG_TTLM_REQ_TIMEOUT (HZ / 5)
@@ -7949,9 +7949,9 @@ static void ieee80211_process_adv_ttlm(struct ieee80211_sub_if_data *sdata,
 			/* Link switching can take time, so schedule it
 			 * 100ms before to be ready on time
 			 */
-			if (delay_usec > IEEE80211_ADV_TTLM_SAFETY_BUFFER_MS)
+			if (delay_usec > IEEE80211_ADV_TTLM_SAFETY_BUFFER)
 				delay_usec -=
-					IEEE80211_ADV_TTLM_SAFETY_BUFFER_MS;
+					IEEE80211_ADV_TTLM_SAFETY_BUFFER;
 			else
 				delay_usec = 0;
 
