@@ -62,7 +62,7 @@ struct ieee80211_key {
 	struct ieee80211_sub_if_data *sdata;
 	struct sta_info *sta;
 
-	/* for sdata list */
+	/* for sdata list - note reuse and local->key_lock locking */
 	struct list_head list;
 
 	/* protected by key mutex */

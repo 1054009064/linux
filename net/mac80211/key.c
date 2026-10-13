@@ -532,8 +532,11 @@ static int ieee80211_key_replace(struct ieee80211_sub_if_data *sdata,
 	if (ret)
 		return ret;
 
-	if (new)
-		list_add_tail_rcu(&new->list, &sdata->key_list);
+	if (new) {
+		spin_lock_bh(&sdata->local->key_lock);
+		list_add_tail(&new->list, &sdata->key_list);
+		spin_unlock_bh(&sdata->local->key_lock);
+	}
 
 	if (sta) {
 		if (pairwise) {
@@ -596,8 +599,11 @@ static int ieee80211_key_replace(struct ieee80211_sub_if_data *sdata,
 							   new->conf.keyidx);
 	}
 
-	if (old)
-		list_del_rcu(&old->list);
+	if (old) {
+		spin_lock_bh(&sdata->local->key_lock);
+		list_del(&old->list);
+		spin_unlock_bh(&sdata->local->key_lock);
+	}
 
 	return 0;
 }
@@ -803,8 +809,8 @@ static void ieee80211_key_destroy(struct ieee80211_key *key,
 		return;
 
 	/*
-	 * Synchronize so the TX path and rcu key iterators
-	 * can no longer be using this key before we free/remove it.
+	 * Synchronize so the TX path can no longer be using this
+	 * key before we free/remove it.
 	 */
 	synchronize_net();
 
@@ -1078,42 +1084,46 @@ void ieee80211_iter_keys(struct ieee80211_hw *hw,
 EXPORT_SYMBOL(ieee80211_iter_keys);
 
 static void
-_ieee80211_iter_keys_rcu(struct ieee80211_hw *hw,
-			 struct ieee80211_sub_if_data *sdata,
-			 void (*iter)(struct ieee80211_hw *hw,
-				      struct ieee80211_vif *vif,
-				      struct ieee80211_sta *sta,
-				      struct ieee80211_key_conf *key,
-				      void *data),
-			 void *iter_data)
+_ieee80211_iter_keys_atomic(struct ieee80211_hw *hw,
+			    struct ieee80211_sub_if_data *sdata,
+			    void (*iter)(struct ieee80211_hw *hw,
+					 struct ieee80211_vif *vif,
+					 struct ieee80211_sta *sta,
+					 struct ieee80211_key_conf *key,
+					 void *data),
+			    void *iter_data)
 {
 	struct ieee80211_key *key;
 
-	list_for_each_entry_rcu(key, &sdata->key_list, list)
+	list_for_each_entry(key, &sdata->key_list, list)
 		ieee80211_key_iter(hw, &sdata->vif, key, iter, iter_data);
 }
 
-void ieee80211_iter_keys_rcu(struct ieee80211_hw *hw,
-			     struct ieee80211_vif *vif,
-			     void (*iter)(struct ieee80211_hw *hw,
-					  struct ieee80211_vif *vif,
-					  struct ieee80211_sta *sta,
-					  struct ieee80211_key_conf *key,
-					  void *data),
-			     void *iter_data)
+void ieee80211_iter_keys_atomic(struct ieee80211_hw *hw,
+				struct ieee80211_vif *vif,
+				void (*iter)(struct ieee80211_hw *hw,
+					     struct ieee80211_vif *vif,
+					     struct ieee80211_sta *sta,
+					     struct ieee80211_key_conf *key,
+					     void *data),
+				void *iter_data)
 {
 	struct ieee80211_local *local = hw_to_local(hw);
 	struct ieee80211_sub_if_data *sdata;
 
+	spin_lock_bh(&local->key_lock);
 	if (vif) {
 		sdata = vif_to_sdata(vif);
-		_ieee80211_iter_keys_rcu(hw, sdata, iter, iter_data);
+		_ieee80211_iter_keys_atomic(hw, sdata, iter, iter_data);
 	} else {
+		rcu_read_lock();
 		list_for_each_entry_rcu(sdata, &local->interfaces, list)
-			_ieee80211_iter_keys_rcu(hw, sdata, iter, iter_data);
+			_ieee80211_iter_keys_atomic(hw, sdata, iter, iter_data);
+		rcu_read_unlock();
 	}
+	spin_unlock_bh(&local->key_lock);
 }
-EXPORT_SYMBOL(ieee80211_iter_keys_rcu);
+EXPORT_SYMBOL(ieee80211_iter_keys_atomic);
 
 static void ieee80211_free_keys_iface(struct ieee80211_sub_if_data *sdata,
 				      struct list_head *keys)

@@ -1533,6 +1533,9 @@ struct ieee80211_local {
 	/* protects the aggregated multicast list and filter calls */
 	spinlock_t filter_lock;
 
+	/* protects atomic iteration of each sdata key_list */
+	spinlock_t key_lock;
+
 	/* used for uploading changed mc list */
 	struct wiphy_work reconfig_filter;
 
