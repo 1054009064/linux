@@ -194,11 +194,14 @@ ieee80211_determine_ap_chan_uhr(struct ieee80211_sub_if_data *sdata,
 	const struct ieee802_11_elems *elems = data->elems;
 	const struct ieee80211_uhr_operation *uhr_oper = elems->uhr_operation;
 	struct cfg80211_chan_def *chandef = data->chandef;
+	const struct ieee80211_uhr_param_update_tuple *tuple;
 	struct cfg80211_chan_def npca_chandef = *chandef;
 	const struct ieee80211_sta_uhr_cap *uhr_cap;
 	const struct ieee80211_uhr_npca_info *npca;
 	const struct ieee80211_uhr_dbe_info *dbe;
 	struct cfg80211_chan_def dbe_chandef;
+	bool npca_being_disabled = false;
+	bool dbe_being_disabled = false;
 
 	if (elems->frame_type == (IEEE80211_FTYPE_MGMT | IEEE80211_STYPE_BEACON)) {
 		int dbe_bw_mhz;
@@ -228,6 +231,26 @@ ieee80211_determine_ap_chan_uhr(struct ieee80211_sub_if_data *sdata,
 	if (!elems->uhr_cap)
 		return false;
 
+	for_each_uhr_param_update_tuple(elems->uhr_param_upd,
+					elems->uhr_param_upd_len,
+					tuple) {
+		u8 mode = u8_get_bits(tuple->control,
+				      IEEE80211_UHR_PARAM_UPDATE_MODE_CTRL_MODE_ID);
+
+		/* ignore enabling/updates - handle from beacons later */
+		if (tuple->control & IEEE80211_UHR_PARAM_UPDATE_MODE_CTRL_MODE_ENABLE)
+			continue;
+
+		switch (mode) {
+		case IEEE80211_UHR_PARAM_UPDATE_MODE_ID_NPCA:
+			npca_being_disabled = true;
+			break;
+		case IEEE80211_UHR_PARAM_UPDATE_MODE_ID_DBE:
+			dbe_being_disabled = true;
+			break;
+		}
+	}
+
 	npca = ieee80211_uhr_npca_info(uhr_oper);
 
 	if (npca && !(elems->uhr_cap->mac.mac_cap[0] &
@@ -241,7 +264,8 @@ ieee80211_determine_ap_chan_uhr(struct ieee80211_sub_if_data *sdata,
 	if (!cfg80211_chandef_npca_valid(sdata->local->hw.wiphy,
 					 &npca_chandef, npca) ||
 	    cfg80211_chandef_add_npca(sdata->local->hw.wiphy,
-				      &npca_chandef, npca)) {
+				      &npca_chandef,
+				      npca_being_disabled ? NULL : npca)) {
 		sdata_info(sdata,
 			   "AP UHR NPCA settings invalid, disabling UHR\n");
 		return false;
@@ -252,8 +276,10 @@ ieee80211_determine_ap_chan_uhr(struct ieee80211_sub_if_data *sdata,
 	if (WARN_ON(!uhr_cap))
 		return false;
 
-	if (uhr_cap->mac.mac_cap[0] & IEEE80211_UHR_MAC_CAP0_NPCA_SUPP)
+	if (uhr_cap->mac.mac_cap[0] & IEEE80211_UHR_MAC_CAP0_NPCA_SUPP) {
+		/* no-op if NPCA wasn't present or being disabled */
 		*chandef = npca_chandef;
+	}
 
 	dbe = ieee80211_uhr_oper_dbe_info(uhr_oper);
 	if (dbe) {
@@ -311,6 +337,9 @@ ieee80211_determine_ap_chan_uhr(struct ieee80211_sub_if_data *sdata,
 	}
 
 	dbe_chandef = *chandef;
+
+	if (dbe_being_disabled)
+		dbe = NULL;
 
 	if (cfg80211_chandef_add_dbe(&dbe_chandef, dbe)) {
 		sdata_info(sdata,
