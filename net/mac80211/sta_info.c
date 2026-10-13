@@ -353,6 +353,7 @@ struct sta_info *sta_info_get_by_idx(struct ieee80211_sub_if_data *sdata,
 static void sta_info_free_link(struct link_sta_info *link_sta)
 {
 	free_percpu(link_sta->pcpu_rx_stats);
+	ieee80211_free_link_sta_keys(link_sta);
 }
 
 static void sta_link_free_rcu(struct rcu_head *head)
@@ -559,6 +560,8 @@ static int sta_info_alloc_link(struct ieee80211_local *local,
 {
 	struct ieee80211_hw *hw = &local->hw;
 	int i;
+
+	INIT_LIST_HEAD(&link_info->key_destroy_list);
 
 	if (ieee80211_hw_check(hw, USES_RSS)) {
 		link_info->pcpu_rx_stats =
@@ -1575,6 +1578,17 @@ static void __sta_info_destroy_part2(struct sta_info *sta, bool recalc)
 	}
 
 	/* now keys can no longer be reached */
+	for (int i = 0; i < ARRAY_SIZE(sta->link); i++) {
+		struct link_sta_info *link_sta;
+
+		link_sta = wiphy_dereference(local->hw.wiphy, sta->link[i]);
+		if (!link_sta)
+			continue;
+
+		ieee80211_unlink_link_sta_keys(local, link_sta);
+		ieee80211_free_link_sta_keys(link_sta);
+	}
+
 	ieee80211_free_sta_keys(local, sta);
 
 	/* disable TIM bit - last chance to tell driver */
@@ -3513,10 +3527,15 @@ hash:
 
 void ieee80211_sta_remove_link(struct sta_info *sta, unsigned int link_id)
 {
+	struct link_sta_info *link_sta = wiphy_dereference(sta->local->hw.wiphy,
+							   sta->link[link_id]);
 	struct ieee80211_sub_if_data *sdata = sta->sdata;
 	u16 old_links = sta->sta.valid_links;
 
 	lockdep_assert_wiphy(sdata->local->hw.wiphy);
+
+	if (!WARN_ON(!link_sta))
+		ieee80211_unlink_link_sta_keys(sta->local, link_sta);
 
 	sta->sta.valid_links &= ~BIT(link_id);
 

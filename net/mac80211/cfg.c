@@ -704,6 +704,11 @@ static int ieee80211_add_key(struct wiphy *wiphy, struct wireless_dev *wdev,
 
 	switch (sdata->vif.type) {
 	case NL80211_IFTYPE_STATION:
+		/* mostly handled by cfg80211, but make sure */
+		if (pairwise && !mac_addr) {
+			ieee80211_key_free_unused(key);
+			return -EINVAL;
+		}
 		if (sdata->u.mgd.mfp != IEEE80211_MFP_DISABLED)
 			key->conf.flags |= IEEE80211_KEY_FLAG_RX_MGMT;
 		break;
@@ -786,14 +791,14 @@ ieee80211_lookup_key(struct ieee80211_sub_if_data *sdata, int link_id,
 
 		if (cigtk && key_idx < NUM_CTRL_KEYS)
 			return wiphy_dereference(local->hw.wiphy,
-						 link_sta->cigtk[key_idx]);
+						 link_sta->rx_cigtk[key_idx]);
 
 		if (!pairwise && !cigtk &&
 		    key_idx < NUM_DEFAULT_KEYS +
 			      NUM_DEFAULT_MGMT_KEYS +
 			      NUM_DEFAULT_BEACON_KEYS)
 			return wiphy_dereference(local->hw.wiphy,
-						 link_sta->gtk[key_idx]);
+						 link_sta->rx_gtk[key_idx]);
 
 		return NULL;
 	}
@@ -802,9 +807,10 @@ ieee80211_lookup_key(struct ieee80211_sub_if_data *sdata, int link_id,
 		return wiphy_dereference(local->hw.wiphy, sdata->keys[key_idx]);
 
 	if (cigtk)
-		return wiphy_dereference(local->hw.wiphy, link->cigtk[key_idx]);
+		return wiphy_dereference(local->hw.wiphy,
+					 link->tx_cigtk[key_idx]);
 
-	key = wiphy_dereference(local->hw.wiphy, link->gtk[key_idx]);
+	key = wiphy_dereference(local->hw.wiphy, link->tx_gtk[key_idx]);
 	if (key)
 		return key;
 

@@ -138,6 +138,9 @@ struct ieee80211_key {
 	struct ieee80211_key_conf conf;
 };
 
+/* from sta_info.h, but cannot include that */
+struct link_sta_info;
+
 struct ieee80211_key *
 ieee80211_key_alloc(u32 cipher, int idx, size_t key_len,
 		    const u8 *key_data,
@@ -164,6 +167,9 @@ void ieee80211_free_key_list(struct ieee80211_local *local,
 			     struct list_head *keys);
 void ieee80211_free_keys(struct ieee80211_sub_if_data *sdata,
 			 bool force_synchronize);
+void ieee80211_unlink_link_sta_keys(struct ieee80211_local *local,
+				    struct link_sta_info *link_sta);
+void ieee80211_free_link_sta_keys(struct link_sta_info *link_sta);
 void ieee80211_free_sta_keys(struct ieee80211_local *local,
 			     struct sta_info *sta);
 void ieee80211_reenable_keys(struct ieee80211_sub_if_data *sdata);

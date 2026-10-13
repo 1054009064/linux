@@ -1114,10 +1114,10 @@ struct ieee80211_link_data {
 	unsigned int link_id;
 
 	/* multicast keys only */
-	struct ieee80211_key __rcu *gtk[NUM_DEFAULT_KEYS +
-					NUM_DEFAULT_MGMT_KEYS +
-					NUM_DEFAULT_BEACON_KEYS];
-	struct ieee80211_key __rcu *cigtk[NUM_CTRL_KEYS];
+	struct ieee80211_key __rcu *tx_gtk[NUM_DEFAULT_KEYS +
+					   NUM_DEFAULT_MGMT_KEYS +
+					   NUM_DEFAULT_BEACON_KEYS];
+	struct ieee80211_key __rcu *tx_cigtk[NUM_CTRL_KEYS];
 	struct ieee80211_key __rcu *default_multicast_key;
 	struct ieee80211_key __rcu *default_mgmt_key;
 	struct ieee80211_key __rcu *default_beacon_key;
