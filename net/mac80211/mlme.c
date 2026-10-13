@@ -4574,6 +4574,16 @@ static void ieee80211_ml_reconf_reset(struct ieee80211_sub_if_data *sdata)
 	}
 }
 
+static u8 ieee80211_mgd_next_dialog_token(struct ieee80211_sub_if_data *sdata)
+{
+	sdata->u.mgd.dialog_token_alloc++;
+
+	if (!sdata->u.mgd.dialog_token_alloc)
+		sdata->u.mgd.dialog_token_alloc++;
+
+	return sdata->u.mgd.dialog_token_alloc;
+}
+
 static void ieee80211_set_disassoc(struct ieee80211_sub_if_data *sdata,
 				   u16 stype, u16 reason, bool tx,
 				   u8 *frame_buf)
@@ -8708,9 +8718,8 @@ int ieee80211_req_neg_ttlm(struct ieee80211_sub_if_data *sdata,
 		return -EINVAL;
 
 	ieee80211_apply_neg_ttlm(sdata, neg_ttlm);
-	sdata->u.mgd.dialog_token_alloc++;
 	ieee80211_send_neg_ttlm_req(sdata, &sdata->vif.neg_ttlm,
-				    sdata->u.mgd.dialog_token_alloc);
+				    ieee80211_mgd_next_dialog_token(sdata));
 	wiphy_delayed_work_cancel(sdata->local->hw.wiphy,
 				  &sdata->u.mgd.neg_ttlm_timeout_work);
 	wiphy_delayed_work_queue(sdata->local->hw.wiphy,
@@ -11391,7 +11400,7 @@ ieee80211_build_ml_reconf_req(struct ieee80211_sub_if_data *sdata,
 	mgmt->u.action.action_code = WLAN_PROTECTED_EHT_ACTION_LINK_RECONFIG_REQ;
 
 	/* allocate a dialog token and store it */
-	sdata->u.mgd.reconf.dialog_token = ++sdata->u.mgd.dialog_token_alloc;
+	sdata->u.mgd.reconf.dialog_token = ieee80211_mgd_next_dialog_token(sdata);
 	mgmt->u.action.ml_reconf_req.dialog_token =
 		sdata->u.mgd.reconf.dialog_token;
 
@@ -11799,7 +11808,7 @@ int ieee80211_mgd_set_epcs(struct ieee80211_sub_if_data *sdata, bool enable)
 		mgmt->u.action.action_code =
 			WLAN_PROTECTED_EHT_ACTION_EPCS_ENABLE_REQ;
 
-		*pos = ++sdata->u.mgd.dialog_token_alloc;
+		*pos = ieee80211_mgd_next_dialog_token(sdata);
 		sdata->u.mgd.epcs.dialog_token = *pos;
 	} else {
 		mgmt->u.action.action_code =
