@@ -312,6 +312,12 @@ static inline bool ieee80211_uhr_oper_size_ok(const u8 *data, u8 len)
 			return false;
 	}
 
+	if (oper->params & cpu_to_le16(IEEE80211_UHR_OPER_PARAMS_DUO_PRES)) {
+		needed += 1;
+		if (len < needed)
+			return false;
+	}
+
 	/* NPCA Operation Parameters (fixed 4 bytes + optional 2 bytes) */
 	if (oper->params & cpu_to_le16(IEEE80211_UHR_OPER_PARAMS_NPCA_PRES)) {
 		const struct ieee80211_uhr_npca_info *npca =
