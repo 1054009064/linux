@@ -2918,11 +2918,13 @@ struct ieee80211_txq {
  *	dtim_period).
  *
  * @IEEE80211_HW_SUPPORTS_PER_STA_GTK: The device's crypto engine supports
- *	per-station GTKs as used by IBSS RSN or during fast transition. If
- *	the device doesn't support per-station GTKs, but can be asked not
- *	to decrypt group addressed frames, then IBSS RSN support is still
- *	possible but software crypto will be used. Advertise the wiphy flag
- *	only in that case.
+ *	per-station GTKs as used by IBSS RSN and mesh. If the device doesn't
+ *	support per-station GTKs, but can be asked not to decrypt group
+ *	addressed frames, then IBSS RSN support is still possible but
+ *	software crypto must be used. Drivers advertise the wiphy flag
+ *	(%WIPHY_FLAG_IBSS_RSN) instead in that case.
+ *	For mesh, it's assumed that either this flag is set or SW crypto
+ *	can be used, regardless of additional wiphy flags.
  *
  * @IEEE80211_HW_AP_LINK_PS: When operating in AP mode the device
  *	autonomously manages the PS status of connected stations. When

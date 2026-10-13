@@ -155,10 +155,20 @@ static int ieee80211_key_enable_hw_accel(struct ieee80211_key *key)
 	 * per-station GTKs are required to be supported if secure NAN is
 	 * supported).
 	 */
-	if (sta && !(key->conf.flags & IEEE80211_KEY_FLAG_PAIRWISE) &&
-	    !(ieee80211_hw_check(&key->local->hw, SUPPORTS_PER_STA_GTK) ||
-	      sdata->vif.type == NL80211_IFTYPE_NAN_DATA))
-		goto out_unsupported;
+	if (sta && !(key->conf.flags & IEEE80211_KEY_FLAG_PAIRWISE)) {
+		switch (sdata->vif.type) {
+		case NL80211_IFTYPE_NAN_DATA:
+			break;
+		case NL80211_IFTYPE_ADHOC:
+		case NL80211_IFTYPE_MESH_POINT:
+			if (!(ieee80211_hw_check(&key->local->hw,
+						 SUPPORTS_PER_STA_GTK)))
+				goto out_unsupported;
+			break;
+		default:
+			goto out_unsupported;
+		}
+	}
 
 	if (sta && !sta->uploaded)
 		goto out_unsupported;
