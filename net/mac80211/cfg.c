@@ -803,9 +803,6 @@ ieee80211_lookup_key(struct ieee80211_sub_if_data *sdata, int link_id,
 		return NULL;
 	}
 
-	if (pairwise && key_idx < NUM_DEFAULT_KEYS)
-		return wiphy_dereference(local->hw.wiphy, sdata->keys[key_idx]);
-
 	if (cigtk)
 		return wiphy_dereference(local->hw.wiphy,
 					 link->tx_cigtk[key_idx]);
