@@ -118,6 +118,16 @@ static void decrease_tailroom_need_count(struct ieee80211_sub_if_data *sdata,
 	sdata->crypto_tx_tailroom_needed_cnt -= delta;
 }
 
+static bool ieee80211_key_needs_tailroom(struct ieee80211_key *key)
+{
+	if (key->conf.flags & (IEEE80211_KEY_FLAG_GENERATE_MMIC |
+			       IEEE80211_KEY_FLAG_PUT_MIC_SPACE |
+			       IEEE80211_KEY_FLAG_RESERVE_TAILROOM))
+		return true;
+
+	return !(key->flags & KEY_FLAG_UPLOADED_TO_HARDWARE);
+}
+
 static int ieee80211_key_enable_hw_accel(struct ieee80211_key *key)
 {
 	struct ieee80211_sub_if_data *sdata = key->sdata;
@@ -135,10 +145,7 @@ static int ieee80211_key_enable_hw_accel(struct ieee80211_key *key)
 		 * so clear that flag now to avoid trying to remove
 		 * it again later.
 		 */
-		if (key->flags & KEY_FLAG_UPLOADED_TO_HARDWARE &&
-		    !(key->conf.flags & (IEEE80211_KEY_FLAG_GENERATE_MMIC |
-					 IEEE80211_KEY_FLAG_PUT_MIC_SPACE |
-					 IEEE80211_KEY_FLAG_RESERVE_TAILROOM)))
+		if (!ieee80211_key_needs_tailroom(key))
 			increment_tailroom_need_count(sdata);
 
 		key->flags &= ~KEY_FLAG_UPLOADED_TO_HARDWARE;
@@ -204,9 +211,7 @@ static int ieee80211_key_enable_hw_accel(struct ieee80211_key *key)
 	if (!ret) {
 		key->flags |= KEY_FLAG_UPLOADED_TO_HARDWARE;
 
-		if (!(key->conf.flags & (IEEE80211_KEY_FLAG_GENERATE_MMIC |
-					 IEEE80211_KEY_FLAG_PUT_MIC_SPACE |
-					 IEEE80211_KEY_FLAG_RESERVE_TAILROOM)))
+		if (!ieee80211_key_needs_tailroom(key))
 			decrease_tailroom_need_count(sdata, 1);
 
 		WARN_ON((key->conf.flags & IEEE80211_KEY_FLAG_PUT_IV_SPACE) &&
@@ -276,9 +281,7 @@ static void ieee80211_key_disable_hw_accel(struct ieee80211_key *key)
 	    !(sdata->vif.active_links & BIT(key->conf.link_id)))
 		return;
 
-	if (!(key->conf.flags & (IEEE80211_KEY_FLAG_GENERATE_MMIC |
-				 IEEE80211_KEY_FLAG_PUT_MIC_SPACE |
-				 IEEE80211_KEY_FLAG_RESERVE_TAILROOM)))
+	if (!ieee80211_key_needs_tailroom(key))
 		increment_tailroom_need_count(sdata);
 
 	pubsta = sta ? &sta->sta : NULL;
@@ -612,9 +615,7 @@ static int ieee80211_key_replace(struct ieee80211_sub_if_data *sdata,
 		} else if (new->conf.link_id < 0 || !sdata->vif.active_links ||
 			 BIT(new->conf.link_id) & sdata->vif.active_links) {
 			new->flags |= KEY_FLAG_UPLOADED_TO_HARDWARE;
-			if (!(new->conf.flags & (IEEE80211_KEY_FLAG_GENERATE_MMIC |
-						 IEEE80211_KEY_FLAG_PUT_MIC_SPACE |
-						 IEEE80211_KEY_FLAG_RESERVE_TAILROOM)))
+			if (!ieee80211_key_needs_tailroom(new))
 				decrease_tailroom_need_count(sdata, 1);
 		}
 	}
