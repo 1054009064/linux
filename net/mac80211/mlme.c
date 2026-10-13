@@ -185,6 +185,152 @@ struct ieee80211_determine_ap_chan_output {
 	enum nl80211_chan_width non_dbe_width;
 };
 
+static bool
+ieee80211_determine_ap_chan_uhr(struct ieee80211_sub_if_data *sdata,
+				struct ieee80211_supported_band *sband,
+				const struct ieee80211_determine_ap_chan_data *data,
+				struct ieee80211_determine_ap_chan_output *out)
+{
+	const struct ieee802_11_elems *elems = data->elems;
+	const struct ieee80211_uhr_operation *uhr_oper = elems->uhr_operation;
+	struct cfg80211_chan_def *chandef = data->chandef;
+	struct cfg80211_chan_def npca_chandef = *chandef;
+	const struct ieee80211_sta_uhr_cap *uhr_cap;
+	const struct ieee80211_uhr_npca_info *npca;
+	const struct ieee80211_uhr_dbe_info *dbe;
+	struct cfg80211_chan_def dbe_chandef;
+
+	if (elems->frame_type == (IEEE80211_FTYPE_MGMT | IEEE80211_STYPE_BEACON)) {
+		int dbe_bw_mhz;
+		u8 dbe_bw;
+
+		if (!data->cur_chandef || !data->cur_dbe_used ||
+		    !cfg80211_chandef_compatible(chandef, data->cur_chandef))
+			return true;
+
+		dbe_bw = le16_get_bits(uhr_oper->params,
+				       IEEE80211_UHR_OPER_PARAMS_DBE_BW);
+		dbe_bw_mhz = ieee80211_uhr_dbe_bw_mhz(dbe_bw);
+		if (dbe_bw_mhz < 0) {
+			sdata_info(sdata, "AP UHR DBE bandwidth invalid, drop UHR\n");
+			return false;
+		}
+
+		if (cfg80211_chandef_get_width(data->cur_chandef) == dbe_bw_mhz) {
+			*chandef = *data->cur_chandef;
+			out->dbe_used = true;
+		}
+
+		return true;
+	}
+
+	/* frames other than beacons carry UHR capability too */
+	if (!elems->uhr_cap)
+		return false;
+
+	npca = ieee80211_uhr_npca_info(uhr_oper);
+
+	if (npca && !(elems->uhr_cap->mac.mac_cap[0] &
+			IEEE80211_UHR_MAC_CAP0_NPCA_SUPP)) {
+		sdata_info(sdata,
+			   "AP without UHR NPCA capability uses it, disabling UHR\n");
+		return false;
+	}
+
+	/* DBE is not considered yet, so this works */
+	if (!cfg80211_chandef_npca_valid(sdata->local->hw.wiphy,
+					 &npca_chandef, npca) ||
+	    cfg80211_chandef_add_npca(sdata->local->hw.wiphy,
+				      &npca_chandef, npca)) {
+		sdata_info(sdata,
+			   "AP UHR NPCA settings invalid, disabling UHR\n");
+		return false;
+	}
+
+	uhr_cap = ieee80211_get_uhr_iftype_cap_vif(sband, &sdata->vif);
+	/* can't happen since we must have UHR to parse the elems */
+	if (WARN_ON(!uhr_cap))
+		return false;
+
+	if (uhr_cap->mac.mac_cap[0] & IEEE80211_UHR_MAC_CAP0_NPCA_SUPP)
+		*chandef = npca_chandef;
+
+	dbe = ieee80211_uhr_oper_dbe_info(uhr_oper);
+	if (dbe) {
+		const struct ieee80211_uhr_cap_dbe *dbe_cap;
+		u8 dbe_bw_oper;
+		u8 dbe_bw_cap;
+
+		dbe_cap = ieee80211_uhr_dbe_cap(elems->uhr_cap);
+
+		if (!dbe_cap) {
+			sdata_info(sdata,
+				   "AP without UHR DBE capability uses it, disabling UHR\n");
+			return false;
+		}
+
+		dbe_bw_oper = u8_get_bits(dbe->params,
+					  IEEE80211_UHR_DBE_OPER_BANDWIDTH);
+
+		if (le16_get_bits(uhr_oper->params,
+				  IEEE80211_UHR_OPER_PARAMS_DBE_BW) != dbe_bw_oper) {
+			sdata_info(sdata,
+				   "AP UHR DBE settings mismatch, disabling UHR\n");
+			return false;
+		}
+
+		if (ieee80211_uhr_dbe_bw_mhz(dbe_bw_oper) < 0) {
+			sdata_info(sdata,
+				   "AP UHR DBE bandwidth invalid, disabling UHR\n");
+			return false;
+		}
+
+		dbe_bw_cap = u8_get_bits(dbe_cap->cap,
+					 IEEE80211_UHR_MAC_CAP_DBE_MAX_BW);
+
+		switch (dbe_bw_cap) {
+		case IEEE80211_UHR_DBE_MAX_BW_40:
+		case IEEE80211_UHR_DBE_MAX_BW_80:
+		case IEEE80211_UHR_DBE_MAX_BW_160:
+		case IEEE80211_UHR_DBE_MAX_BW_320:
+			break;
+		default:
+			sdata_info(sdata,
+				   "AP UHR DBE capability invalid, disabling UHR\n");
+			return false;
+		}
+
+		/* 1-4 are same in DBE capabilities, map 320-2 to 320 */
+		if (dbe_bw_oper == IEEE80211_UHR_DBE_OPER_BW_320_2)
+			dbe_bw_oper = IEEE80211_UHR_DBE_MAX_BW_320;
+		if (dbe_bw_oper > dbe_bw_cap) {
+			sdata_info(sdata,
+				   "AP UHR DBE wider than capability, disabling UHR\n");
+			return false;
+		}
+	}
+
+	dbe_chandef = *chandef;
+
+	if (cfg80211_chandef_add_dbe(&dbe_chandef, dbe)) {
+		sdata_info(sdata,
+			   "AP UHR DBE settings invalid, disabling UHR\n");
+		return false;
+	}
+
+	if (dbe &&
+	    /* maybe driver would like to never use DBE */
+	    uhr_cap->mac.mac_cap[1] & IEEE80211_UHR_MAC_CAP1_DBE_SUPP &&
+	    ieee80211_chandef_usable(sdata, &dbe_chandef,
+				     IEEE80211_CHAN_DISABLED)) {
+		out->non_dbe_width = chandef->width;
+		*chandef = dbe_chandef;
+		out->dbe_used = true;
+	}
+
+	return true;
+}
+
 static enum ieee80211_conn_mode
 ieee80211_determine_ap_chan(struct ieee80211_sub_if_data *sdata,
 			    const struct ieee80211_determine_ap_chan_data *data,
@@ -404,134 +550,8 @@ check_uhr:
 	if (conn->mode < IEEE80211_CONN_MODE_UHR || !uhr_oper || !elems->ml_basic)
 		return IEEE80211_CONN_MODE_EHT;
 
-	if (elems->frame_type != (IEEE80211_FTYPE_MGMT | IEEE80211_STYPE_BEACON)) {
-		struct cfg80211_chan_def npca_chandef = *chandef;
-		const struct ieee80211_sta_uhr_cap *uhr_cap;
-		const struct ieee80211_uhr_npca_info *npca;
-		const struct ieee80211_uhr_dbe_info *dbe;
-		struct cfg80211_chan_def dbe_chandef;
-
-		/* frames other than beacons carry UHR capability too */
-		if (!elems->uhr_cap)
-			return IEEE80211_CONN_MODE_EHT;
-
-		npca = ieee80211_uhr_npca_info(uhr_oper);
-
-		if (npca && !(elems->uhr_cap->mac.mac_cap[0] &
-				IEEE80211_UHR_MAC_CAP0_NPCA_SUPP)) {
-			sdata_info(sdata,
-				   "AP without UHR NPCA capability uses it, disabling UHR\n");
-			return IEEE80211_CONN_MODE_EHT;
-		}
-
-		/* DBE is not considered yet, so this works */
-		if (!cfg80211_chandef_npca_valid(sdata->local->hw.wiphy,
-						 &npca_chandef, npca) ||
-		    cfg80211_chandef_add_npca(sdata->local->hw.wiphy,
-					      &npca_chandef, npca)) {
-			sdata_info(sdata,
-				   "AP UHR NPCA settings invalid, disabling UHR\n");
-			return IEEE80211_CONN_MODE_EHT;
-		}
-
-		uhr_cap = ieee80211_get_uhr_iftype_cap_vif(sband, &sdata->vif);
-		/* can't happen since we must have UHR to parse the elems */
-		if (WARN_ON(!uhr_cap))
-			return IEEE80211_CONN_MODE_EHT;
-
-		if (uhr_cap->mac.mac_cap[0] & IEEE80211_UHR_MAC_CAP0_NPCA_SUPP)
-			*chandef = npca_chandef;
-
-		dbe = ieee80211_uhr_oper_dbe_info(uhr_oper);
-		if (dbe) {
-			const struct ieee80211_uhr_cap_dbe *dbe_cap;
-			u8 dbe_bw_oper;
-			u8 dbe_bw_cap;
-
-			dbe_cap = ieee80211_uhr_dbe_cap(elems->uhr_cap);
-
-			if (!dbe_cap) {
-				sdata_info(sdata,
-					   "AP without UHR DBE capability uses it, disabling UHR\n");
-				return IEEE80211_CONN_MODE_EHT;
-			}
-
-			dbe_bw_oper = u8_get_bits(dbe->params,
-						  IEEE80211_UHR_DBE_OPER_BANDWIDTH);
-
-			if (le16_get_bits(uhr_oper->params,
-					  IEEE80211_UHR_OPER_PARAMS_DBE_BW) != dbe_bw_oper) {
-				sdata_info(sdata,
-					   "AP UHR DBE settings mismatch, disabling UHR\n");
-				return IEEE80211_CONN_MODE_EHT;
-			}
-
-			if (ieee80211_uhr_dbe_bw_mhz(dbe_bw_oper) < 0) {
-				sdata_info(sdata,
-					   "AP UHR DBE bandwidth invalid, disabling UHR\n");
-				return IEEE80211_CONN_MODE_EHT;
-			}
-
-			dbe_bw_cap = u8_get_bits(dbe_cap->cap,
-						 IEEE80211_UHR_MAC_CAP_DBE_MAX_BW);
-
-			switch (dbe_bw_cap) {
-			case IEEE80211_UHR_DBE_MAX_BW_40:
-			case IEEE80211_UHR_DBE_MAX_BW_80:
-			case IEEE80211_UHR_DBE_MAX_BW_160:
-			case IEEE80211_UHR_DBE_MAX_BW_320:
-				break;
-			default:
-				sdata_info(sdata,
-					   "AP UHR DBE capability invalid, disabling UHR\n");
-				return IEEE80211_CONN_MODE_EHT;
-			}
-
-			/* 1-4 are same in DBE capabilities, map 320-2 to 320 */
-			if (dbe_bw_oper == IEEE80211_UHR_DBE_OPER_BW_320_2)
-				dbe_bw_oper = IEEE80211_UHR_DBE_MAX_BW_320;
-			if (dbe_bw_oper > dbe_bw_cap) {
-				sdata_info(sdata,
-					   "AP UHR DBE wider than capability, disabling UHR\n");
-				return IEEE80211_CONN_MODE_EHT;
-			}
-		}
-
-		dbe_chandef = *chandef;
-
-		if (cfg80211_chandef_add_dbe(&dbe_chandef, dbe)) {
-			sdata_info(sdata,
-				   "AP UHR DBE settings invalid, disabling UHR\n");
-			return IEEE80211_CONN_MODE_EHT;
-		}
-
-		if (dbe &&
-		    /* maybe driver would like to never use DBE */
-		    uhr_cap->mac.mac_cap[1] & IEEE80211_UHR_MAC_CAP1_DBE_SUPP &&
-		    ieee80211_chandef_usable(sdata, &dbe_chandef,
-					     IEEE80211_CHAN_DISABLED)) {
-			out->non_dbe_width = chandef->width;
-			*chandef = dbe_chandef;
-			out->dbe_used = true;
-		}
-	} else if (data->cur_chandef && data->cur_dbe_used &&
-		   cfg80211_chandef_compatible(chandef, data->cur_chandef)) {
-		u8 dbe_bw = le16_get_bits(uhr_oper->params,
-					  IEEE80211_UHR_OPER_PARAMS_DBE_BW);
-		int dbe_bw_mhz;
-
-		dbe_bw_mhz = ieee80211_uhr_dbe_bw_mhz(dbe_bw);
-		if (dbe_bw_mhz < 0) {
-			sdata_info(sdata,
-				   "AP UHR DBE bandwidth invalid, drop UHR\n");
-			return IEEE80211_CONN_MODE_EHT;
-		}
-
-		if (cfg80211_chandef_get_width(data->cur_chandef) == dbe_bw_mhz) {
-			*chandef = *data->cur_chandef;
-			out->dbe_used = true;
-		}
-	}
+	if (!ieee80211_determine_ap_chan_uhr(sdata, sband, data, out))
+		return IEEE80211_CONN_MODE_EHT;
 
 	return IEEE80211_CONN_MODE_UHR;
 }
