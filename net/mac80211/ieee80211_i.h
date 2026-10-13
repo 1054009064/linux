@@ -1826,11 +1826,12 @@ struct ieee80211_csa_ie {
 };
 
 enum ieee80211_elems_parse_error {
-	IEEE80211_PARSE_ERR_INVALID_END		= BIT(0),
-	IEEE80211_PARSE_ERR_DUP_ELEM		= BIT(1),
-	IEEE80211_PARSE_ERR_BAD_ELEM_SIZE	= BIT(2),
-	IEEE80211_PARSE_ERR_UNEXPECTED_ELEM	= BIT(3),
-	IEEE80211_PARSE_ERR_DUP_NEST_ML_BASIC	= BIT(4),
+	IEEE80211_PARSE_ERR_INVALID_END			= BIT(0),
+	IEEE80211_PARSE_ERR_DUP_ELEM			= BIT(1),
+	IEEE80211_PARSE_ERR_BAD_ELEM_SIZE		= BIT(2),
+	IEEE80211_PARSE_ERR_UNEXPECTED_ELEM		= BIT(3),
+	IEEE80211_PARSE_ERR_DUP_NEST_ML_BASIC		= BIT(4),
+	IEEE80211_PARSE_ERR_INVALID_UHR_PARAM_UPD	= BIT(5),
 };
 
 /* Parsed Information Elements */
@@ -1905,6 +1906,7 @@ struct ieee802_11_elems {
 	const struct ieee80211_uhr_cap *uhr_cap;
 	const struct ieee80211_uhr_operation *uhr_operation;
 	const struct ieee80211_cip_cap *cip_cap;
+	const struct ieee80211_uhr_parameters_update *uhr_param_upd;
 
 	/* not the order in the psd values is per element, not per chandef */
 	struct ieee80211_parsed_tpe tpe;
@@ -1936,6 +1938,8 @@ struct ieee802_11_elems {
 	size_t ml_basic_len;
 	size_t ml_reconf_len;
 	size_t ml_epcs_len;
+	/* same for UHR parameters update */
+	size_t uhr_param_upd_len;
 
 	u8 ttlm_num;
 
