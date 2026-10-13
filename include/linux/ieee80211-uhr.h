@@ -466,7 +466,7 @@ struct ieee80211_uhr_cap_dbe {
 	u8 max_switch_time_period;
 	u8 mode_change_intvl;
 	/* present 0, 1 or 2 times depending on _PRES bits */
-	struct {
+	struct ieee80211_uhr_cap_dbe_bwcap {
 		struct ieee80211_eht_mcs_nss_supp_bw eht_mcs_map;
 		u8 cap;
 	} __packed bwcap[];

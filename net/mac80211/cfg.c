@@ -2653,8 +2653,7 @@ static int sta_link_apply_parameters(struct ieee80211_local *local,
 	if (params->uhr_capa)
 		ieee80211_uhr_cap_ie_to_sta_uhr_cap(sdata, sband,
 						    params->uhr_capa,
-						    params->uhr_capa_len,
-						    link_sta);
+						    false, link_sta);
 
 	if (params->s1g_capa)
 		ieee80211_s1g_cap_to_sta_s1g_cap(sdata, params->s1g_capa,

@@ -6275,8 +6275,7 @@ static bool ieee80211_assoc_config_link(struct ieee80211_link_data *link,
 
 		ieee80211_uhr_cap_ie_to_sta_uhr_cap(sdata, sband,
 						    elems->uhr_cap,
-						    elems->uhr_cap_len,
-						    link_sta);
+						    true, link_sta);
 
 		bss_conf->uhr_support = link_sta->pub->uhr_cap.has_uhr;
 

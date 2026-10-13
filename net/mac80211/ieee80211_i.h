@@ -3024,7 +3024,7 @@ void
 ieee80211_uhr_cap_ie_to_sta_uhr_cap(struct ieee80211_sub_if_data *sdata,
 				    struct ieee80211_supported_band *sband,
 				    const struct ieee80211_uhr_cap *uhr_cap,
-				    u8 uhr_cap_len,
+				    bool from_ap,
 				    struct link_sta_info *link_sta);
 
 #if IS_ENABLED(CONFIG_MAC80211_KUNIT_TEST)
