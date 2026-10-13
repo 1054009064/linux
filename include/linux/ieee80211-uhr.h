@@ -646,11 +646,14 @@ enum ieee80211_uhr_link_reconfig_notify_type {
 };
 
 enum ieee80211_uhr_mode_change_control {
-	IEEE80211_UHR_MODE_CHANGE_CONTROL_MODE_ID		= 0x003f,
-	IEEE80211_UHR_MODE_CHANGE_CONTROL_MODE_ENABLE		= 0x0040,
-	IEEE80211_UHR_MODE_CHANGE_CONTROL_MODE_UPDATE		= 0x0080,
-	IEEE80211_UHR_MODE_CHANGE_CONTROL_MODE_LENGTH		= 0x0f00,
-	IEEE80211_UHR_MODE_CHANGE_CONTROL_MODE_SPECIFIC		= 0xf000,
+	IEEE80211_UHR_MODE_CHANGE_CONTROL_MODE_ID		= 0x3f,
+	IEEE80211_UHR_MODE_CHANGE_CONTROL_MODE_ENABLE		= 0x40,
+	IEEE80211_UHR_MODE_CHANGE_CONTROL_MODE_UPDATE		= 0x80,
+};
+
+enum ieee80211_uhr_mode_change_mode_length_specific_ctrl {
+	IEEE80211_UHR_MODE_CHANGE_MODE_LENGTH		= 0x0f,
+	IEEE80211_UHR_MODE_CHANGE_MODE_SPECIFIC_CTRL	= 0xf0,
 };
 
 enum ieee80211_uhr_mode_change_mode_id {
@@ -669,25 +672,39 @@ enum ieee80211_uhr_mode_change_mode_id {
 };
 
 struct ieee80211_uhr_mode_change_tuple {
-	__le16 control;
+	u8 control;
 	u8 variable[];
 } __packed;
 
-static inline int
-ieee80211_uhr_mode_change_tuple_size(const struct ieee80211_uhr_mode_change_tuple *tuple)
+static inline const struct ieee80211_uhr_mode_change_tuple *
+ieee80211_uhr_mode_change_tuple_next(const struct ieee80211_uhr_mode_change_tuple *tuple,
+				     size_t remaining)
 {
-	return sizeof(*tuple) +
-	       le16_get_bits(tuple->control,
-			     IEEE80211_UHR_MODE_CHANGE_CONTROL_MODE_LENGTH);
+	size_t needed = sizeof(*tuple);
+
+	if (remaining < needed)
+		return NULL;
+
+	if (tuple->control & IEEE80211_UHR_MODE_CHANGE_CONTROL_MODE_ENABLE) {
+		needed += 1;
+		if (remaining < needed)
+			return NULL;
+
+		needed += u8_get_bits(tuple->variable[0],
+				      IEEE80211_UHR_MODE_CHANGE_MODE_LENGTH);
+		if (remaining < needed)
+			return NULL;
+	}
+
+	return (const void *)((const u8 *)tuple + needed);
 }
 
 #define for_each_uhr_mode_change_tuple(data, len, tuple)		\
 	for (tuple = (const void *)(data);				\
-	     (len) - ((const u8 *)tuple - (data)) >= sizeof(*tuple) &&	\
-	     (len) - ((const u8 *)tuple - (data)) >=			\
-		ieee80211_uhr_mode_change_tuple_size(tuple);		\
-	     tuple = (const void *)((const u8 *)tuple +			\
-				    ieee80211_uhr_mode_change_tuple_size(tuple)))
+	     ieee80211_uhr_mode_change_tuple_next(			\
+			tuple, (len) - ((const u8 *)tuple - (data)));	\
+	     tuple = ieee80211_uhr_mode_change_tuple_next(		\
+			tuple, (len) - ((const u8 *)tuple - (data))))
 
 struct ieee80211_uhr_parameters_update {
 	u8 countdown;

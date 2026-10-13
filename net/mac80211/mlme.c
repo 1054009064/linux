@@ -1549,7 +1549,7 @@ static void ieee80211_send_uhr_omp_req_dbe(struct ieee80211_sub_if_data *sdata,
 	       3 + sizeof(*mle) + sizeof(*common) +
 	       IEEE80211_MLD_MAX_NUM_LINKS *
 		(2 + sizeof(*per_sta) +
-		 3 + sizeof(*tuple) /* single tuple for each link */);
+		 3 + sizeof(*tuple) + 1 /* single tuple for each link */);
 
 	skb = alloc_skb(size, GFP_KERNEL);
 	if (!skb)
@@ -1603,7 +1603,7 @@ static void ieee80211_send_uhr_omp_req_dbe(struct ieee80211_sub_if_data *sdata,
 	memcpy(common->mld_mac_addr, sdata->vif.addr, ETH_ALEN);
 
 	for_each_link_data(sdata, link) {
-		u8 *subelem_len;
+		u8 *subelem_len, *mode_chg_len;
 
 		if (!(link_mask & BIT(link->link_id)))
 			continue;
@@ -1621,16 +1621,20 @@ static void ieee80211_send_uhr_omp_req_dbe(struct ieee80211_sub_if_data *sdata,
 		per_sta->sta_info_len = 1; /* includes itself */
 
 		skb_put_u8(skb, WLAN_EID_EXTENSION);
-		skb_put_u8(skb, 1 + sizeof(*tuple));
+		mode_chg_len = skb_put(skb, 1);
+		*mode_chg_len = 1 + sizeof(*tuple);
 		skb_put_u8(skb, WLAN_EID_EXT_UHR_MODE_CHG);
 		tuple = skb_put_zero(skb, sizeof(*tuple));
 		tuple->control =
-			le16_encode_bits(IEEE80211_UHR_MODE_CHANGE_MODE_ID_DBE,
-					 IEEE80211_UHR_MODE_CHANGE_CONTROL_MODE_ID);
+			u8_encode_bits(IEEE80211_UHR_MODE_CHANGE_MODE_ID_DBE,
+				       IEEE80211_UHR_MODE_CHANGE_CONTROL_MODE_ID);
 
-		if (link->u.mgd.conn.dbe_enabled)
-			tuple->control |=
-				cpu_to_le16(IEEE80211_UHR_MODE_CHANGE_CONTROL_MODE_ENABLE);
+		if (link->u.mgd.conn.dbe_enabled) {
+			tuple->control |= IEEE80211_UHR_MODE_CHANGE_CONTROL_MODE_ENABLE;
+			/* length 0 / nothing DBE specific */
+			skb_put_zero(skb, 1);
+			(*mode_chg_len) += 1;
+		}
 
 		ieee80211_fragment_element(skb, subelem_len,
 					   IEEE80211_MLE_SUBELEM_FRAGMENT);
