@@ -1644,9 +1644,14 @@ static void ieee80211_send_uhr_omp_req_dbe(struct ieee80211_sub_if_data *sdata,
 	ieee80211_tx_skb(sdata, skb);
 }
 
+struct ieee80211_config_bw_out {
+	u64 changed;
+};
+
 static int ieee80211_config_bw(struct ieee80211_link_data *link,
 			       struct ieee802_11_elems *elems,
-			       bool update, u64 *changed, u16 stype)
+			       bool update, u16 stype,
+			       struct ieee80211_config_bw_out *out)
 {
 	struct ieee80211_channel *channel = link->conf->chanreq.oper.chan;
 	struct cfg80211_chan_def ap_chandef;
@@ -1668,6 +1673,8 @@ static int ieee80211_config_bw(struct ieee80211_link_data *link,
 	const char *frame;
 	u16 ht_opmode;
 	int ret;
+
+	memset(out, 0, sizeof(*out));
 
 	switch (stype) {
 	case IEEE80211_STYPE_BEACON:
@@ -1720,7 +1727,7 @@ static int ieee80211_config_bw(struct ieee80211_link_data *link,
 	if (elems->ht_operation) {
 		ht_opmode = le16_to_cpu(elems->ht_operation->operation_mode);
 		if (link->conf->ht_operation_mode != ht_opmode) {
-			*changed |= BSS_CHANGED_HT;
+			out->changed |= BSS_CHANGED_HT;
 			link->conf->ht_operation_mode = ht_opmode;
 		}
 	}
@@ -1744,7 +1751,7 @@ static int ieee80211_config_bw(struct ieee80211_link_data *link,
 					&chanreq.oper);
 		if (memcmp(&link->conf->tpe, &elems->tpe, sizeof(elems->tpe))) {
 			link->conf->tpe = elems->tpe;
-			*changed |= BSS_CHANGED_TPE;
+			out->changed |= BSS_CHANGED_TPE;
 		}
 	}
 
@@ -1787,7 +1794,7 @@ static int ieee80211_config_bw(struct ieee80211_link_data *link,
 		if (memcmp(&params, &link->conf->npca, sizeof(params)) ||
 		    !update) {
 			link->conf->npca = params;
-			*changed |= BSS_CHANGED_NPCA;
+			out->changed |= BSS_CHANGED_NPCA;
 		}
 	}
 
@@ -1833,7 +1840,7 @@ static int ieee80211_config_bw(struct ieee80211_link_data *link,
 	 * less common and wouldn't completely prevent using the AP.
 	 */
 
-	ret = ieee80211_link_change_chanreq(link, &chanreq, changed);
+	ret = ieee80211_link_change_chanreq(link, &chanreq, &out->changed);
 	if (ret) {
 		sdata_info(sdata,
 			   "AP %pM changed bandwidth in %s to incompatible one - disconnect\n",
@@ -1857,7 +1864,7 @@ update_npca:
 	if (chanreq.oper.npca_chan && chanctx_conf->def.npca_chan &&
 	    !link->conf->npca.enabled && !sdata->vif.cfg.assoc) {
 		link->conf->npca.enabled = true;
-		*changed |= BSS_CHANGED_NPCA;
+		out->changed |= BSS_CHANGED_NPCA;
 	}
 
 	return 0;
@@ -5937,6 +5944,7 @@ static bool ieee80211_assoc_config_link(struct ieee80211_link_data *link,
 	bool is_6ghz = cbss->channel->band == NL80211_BAND_6GHZ;
 	bool is_s1g = cbss->channel->band == NL80211_BAND_S1GHZ;
 	const struct cfg80211_bss_ies *bss_ies = NULL;
+	struct ieee80211_config_bw_out config_bw_out;
 	struct ieee802_11_elems *bss_elems = NULL;
 	struct ieee80211_supported_band *sband;
 	struct ieee802_11_elems *elems;
@@ -6156,12 +6164,14 @@ static bool ieee80211_assoc_config_link(struct ieee80211_link_data *link,
 	/* check/update if AP changed anything in assoc response vs. scan */
 	if (ieee80211_config_bw(link, elems,
 				link_id == assoc_data->assoc_link_id,
-				changed,
 				le16_to_cpu(mgmt->frame_control) &
-					IEEE80211_FCTL_STYPE)) {
+					IEEE80211_FCTL_STYPE,
+				&config_bw_out)) {
 		ret = false;
 		goto out;
 	}
+
+	*changed |= config_bw_out.changed;
 
 	if (WARN_ON(!link->conf->chanreq.oper.chan)) {
 		ret = false;
@@ -8195,6 +8205,7 @@ static void ieee80211_rx_mgmt_beacon(struct ieee80211_link_data *link,
 	size_t baselen;
 	struct ieee802_11_elems *elems;
 	struct ieee80211_local *local = sdata->local;
+	struct ieee80211_config_bw_out config_bw_out;
 	struct ieee80211_chanctx_conf *chanctx_conf;
 	struct ieee80211_supported_band *sband;
 	struct ieee80211_channel *chan;
@@ -8517,8 +8528,8 @@ static void ieee80211_rx_mgmt_beacon(struct ieee80211_link_data *link,
 
 	changed |= ieee80211_recalc_twt_req(sdata, sband, link, link_sta, elems);
 
-	if (ieee80211_config_bw(link, elems, true, &changed,
-				IEEE80211_STYPE_BEACON)) {
+	if (ieee80211_config_bw(link, elems, true, IEEE80211_STYPE_BEACON,
+				&config_bw_out)) {
 		ieee80211_set_disassoc(sdata, IEEE80211_STYPE_DEAUTH,
 				       WLAN_REASON_DEAUTH_LEAVING,
 				       true, deauth_buf);
@@ -8528,6 +8539,8 @@ static void ieee80211_rx_mgmt_beacon(struct ieee80211_link_data *link,
 					    false);
 		goto free;
 	}
+
+	changed |= config_bw_out.changed;
 
 	if (elems->opmode_notif)
 		ieee80211_vht_handle_opmode(sdata, link_sta,
