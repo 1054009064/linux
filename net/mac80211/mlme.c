@@ -550,6 +550,12 @@ check_uhr:
 	if (conn->mode < IEEE80211_CONN_MODE_UHR || !uhr_oper || !elems->ml_basic)
 		return IEEE80211_CONN_MODE_EHT;
 
+	/* if UHR parameter update is invalid, ignore UHR entirely */
+	if (elems->parse_error & IEEE80211_PARSE_ERR_INVALID_UHR_PARAM_UPD) {
+		sdata_info(sdata, "AP has bad UHR parameter update, drop UHR\n");
+		return IEEE80211_CONN_MODE_EHT;
+	}
+
 	if (!ieee80211_determine_ap_chan_uhr(sdata, sband, data, out))
 		return IEEE80211_CONN_MODE_EHT;
 
