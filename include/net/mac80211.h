@@ -3097,6 +3097,9 @@ struct ieee80211_txq {
  * @IEEE80211_HW_SUPPORTS_NDP_BLOCKACK: HW can transmit/receive S1G NDP
  *	BlockAck frames.
  *
+ * @IEEE80211_HW_PER_STA_AP_GTK: Install GTKs to the AP STA entry instead
+ *	of with %NULL sta.
+ *
  * @NUM_IEEE80211_HW_FLAGS: number of hardware flags, used for sizing arrays
  */
 enum ieee80211_hw_flags {
@@ -3158,6 +3161,7 @@ enum ieee80211_hw_flags {
 	IEEE80211_HW_HANDLES_QUIET_CSA,
 	IEEE80211_HW_STRICT,
 	IEEE80211_HW_SUPPORTS_NDP_BLOCKACK,
+	IEEE80211_HW_PER_STA_AP_GTK,
 
 	/* keep last, obviously */
 	NUM_IEEE80211_HW_FLAGS

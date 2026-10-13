@@ -167,8 +167,13 @@ static int ieee80211_key_enable_hw_accel(struct ieee80211_key *key)
 				goto out_unsupported;
 			break;
 		case NL80211_IFTYPE_STATION:
-			/* install group keys w/o STA as we always did */
-			sta = NULL;
+			/*
+			 * unless requested otherwise, NULL out
+			 * the STA for client group keys
+			 */
+			if (!ieee80211_hw_check(&key->local->hw,
+						PER_STA_AP_GTK))
+				sta = NULL;
 			break;
 		default:
 			goto out_unsupported;
@@ -277,9 +282,10 @@ static void ieee80211_key_disable_hw_accel(struct ieee80211_key *key)
 		increment_tailroom_need_count(sdata);
 
 	pubsta = sta ? &sta->sta : NULL;
-	/* for now override STA to NULL for client group keys as before */
+	/* unless requested otherwise, NULL out the STA for client group keys */
 	if (sdata->vif.type == NL80211_IFTYPE_STATION &&
-	    !(key->conf.flags & IEEE80211_KEY_FLAG_PAIRWISE))
+	    !(key->conf.flags & IEEE80211_KEY_FLAG_PAIRWISE) &&
+	    !ieee80211_hw_check(&key->local->hw, PER_STA_AP_GTK))
 		pubsta = NULL;
 
 	key->flags &= ~KEY_FLAG_UPLOADED_TO_HARDWARE;
@@ -1078,9 +1084,10 @@ ieee80211_key_iter(struct ieee80211_hw *hw,
 	if (!(key->flags & KEY_FLAG_UPLOADED_TO_HARDWARE))
 		return;
 
-	/* for now override STA to NULL for client group keys as before */
+	/* unless requested otherwise, NULL out the STA for client group keys */
 	if (vif->type == NL80211_IFTYPE_STATION &&
-	    !(key->conf.flags & IEEE80211_KEY_FLAG_PAIRWISE))
+	    !(key->conf.flags & IEEE80211_KEY_FLAG_PAIRWISE) &&
+	    !ieee80211_hw_check(&key->local->hw, PER_STA_AP_GTK))
 		sta = NULL;
 
 	/* skip keys of station in removal process (if driver knew about STA) */
