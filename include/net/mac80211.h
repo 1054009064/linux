@@ -4168,7 +4168,7 @@ struct ieee80211_prep_tx_info {
  * @config: Handler for configuration requests. IEEE 802.11 code calls this
  *	function to change hardware configuration, e.g., channel.
  *	This function should never fail but returns a negative error code
- *	if it does. The callback can sleep.
+ *	if it does. The callback is optional and can sleep.
  *
  * @bss_info_changed: Handler for configuration requests related to BSS
  *	parameters that may vary during BSS's lifespan, and may affect low

@@ -804,7 +804,7 @@ struct ieee80211_hw *ieee80211_alloc_hw_nm(size_t priv_data_len,
 	struct wiphy *wiphy;
 	bool emulate_chanctx;
 
-	if (WARN_ON(!ops->tx || !ops->start || !ops->stop || !ops->config ||
+	if (WARN_ON(!ops->tx || !ops->start || !ops->stop ||
 		    !ops->add_interface || !ops->remove_interface ||
 		    !ops->configure_filter || !ops->wake_tx_queue))
 		return NULL;
