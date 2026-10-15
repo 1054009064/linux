@@ -29299,6 +29299,7 @@ VFIO SELFTESTS
 M:	David Matlack <dmatlack@google.com>
 L:	kvm@vger.kernel.org
 S:	Maintained
+F:	Documentation/driver-api/vfio-selftests.rst
 F:	tools/testing/selftests/vfio/
 
 VFIO VIRTIO PCI DRIVER
