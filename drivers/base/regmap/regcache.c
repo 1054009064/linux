@@ -138,16 +138,6 @@ static int regcache_locked_op(struct regmap *map,
 	return op(map);
 }
 
-static void regcache_locked_exit(struct regmap *map)
-{
-	if (!map->cache_ops->exit)
-		return;
-
-	dev_dbg(map->dev, "Destroying %s cache\n", map->cache_ops->name);
-	guard(regmap)(map);
-	map->cache_ops->exit(map);
-}
-
 static int __regcache_sync(struct regmap *map, unsigned int min, unsigned int max)
 {
 	if (!map->cache_dirty)
