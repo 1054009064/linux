@@ -2051,6 +2051,7 @@ static void rt61pci_fill_rxdone(struct queue_entry *entry,
 		rxdesc->dev_flags |= RXDONE_SIGNAL_BITRATE;
 	if (rt2x00_get_field32(word0, RXD_W0_MY_BSS))
 		rxdesc->dev_flags |= RXDONE_MY_BSS;
+	skb_trim(entry->skb, rxdesc->size);
 }
 
 /*
