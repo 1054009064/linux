@@ -329,6 +329,9 @@ static void kvm_vm_stage2_unmap_range(struct kvm_s2_mmu *mmu,
 	struct kvm *kvm = kvm_s2_mmu_to_kvm(mmu);
 	int (*fn)(struct kvm_pgtable *, u64, u64);
 
+	lockdep_assert_held_write(&kvm->mmu_lock);
+	WARN_ON(size & ~PAGE_MASK);
+
 	if (kvm_is_nested_s2_mmu(kvm, mmu))
 		fn = kvm_pgtable_stage2_unmap_tracked;
 	else
@@ -2298,9 +2301,11 @@ static int user_mem_abort(const struct kvm_s2_fault_desc *s2fd,
 
 static int kvm_vm_mem_abort(const struct kvm_s2_fault_desc *s2fd)
 {
-	VM_WARN_ON_ONCE(kvm_s2_fault_is_perm(s2fd) &&
-			!esr_abt_is_write_fault(s2fd->esr) &&
-			!kvm_s2_fault_is_exec(s2fd));
+	struct kvm_vcpu *vcpu = s2fd->vcpu;
+
+	VM_WARN_ON_ONCE(kvm_vcpu_trap_is_permission_fault(vcpu) &&
+			!kvm_is_write_fault(vcpu) &&
+			!esr_abt_is_exec_fault(kvm_vcpu_get_esr(vcpu)));
 
 	if (kvm_slot_has_gmem(s2fd->memslot))
 		return gmem_abort(s2fd, NULL);
