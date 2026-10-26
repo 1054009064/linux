@@ -2060,6 +2060,13 @@ static int ieee80211_change_beacon(struct wiphy *wiphy, struct net_device *dev,
 		changed |= BSS_CHANGED_HE_BSS_COLOR;
 	}
 
+	if (params->he_obss_pd.enable && link_conf->he_support &&
+	    memcmp(&params->he_obss_pd, &link_conf->he_obss_pd,
+		   sizeof(params->he_obss_pd))) {
+		link_conf->he_obss_pd = params->he_obss_pd;
+		changed |= BSS_CHANGED_HE_OBSS_PD;
+	}
+
 	ieee80211_link_info_change_notify(sdata, link, changed);
 	return 0;
 }

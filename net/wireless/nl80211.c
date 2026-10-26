@@ -7718,6 +7718,13 @@ static int nl80211_parse_ap_update(struct cfg80211_registered_device *rdev,
 			return err;
 	}
 
+	attr = attrs[NL80211_ATTR_HE_OBSS_PD];
+	if (attr) {
+		err = nl80211_parse_he_obss_pd(attr, &params->he_obss_pd);
+		if (err)
+			return err;
+	}
+
 	return 0;
 }
 

@@ -1668,12 +1668,15 @@ struct cfg80211_ap_settings {
  * @fils_discovery: FILS discovery transmission parameters
  * @unsol_bcast_probe_resp: Unsolicited broadcast probe response parameters
  * @s1g_short_beacon: S1G short beacon data
+ * @he_obss_pd: OBSS Packet Detection settings, applied if @he_obss_pd.enable
+ *	is set
  */
 struct cfg80211_ap_update {
 	struct cfg80211_beacon_data beacon;
 	struct cfg80211_fils_discovery fils_discovery;
 	struct cfg80211_unsol_bcast_probe_resp unsol_bcast_probe_resp;
 	struct cfg80211_s1g_short_beacon s1g_short_beacon;
+	struct ieee80211_he_obss_pd he_obss_pd;
 };
 
 /**
